@@ -1,0 +1,4 @@
+.stack-work/
+latte-compiler.cabal
+*~
+.idea
