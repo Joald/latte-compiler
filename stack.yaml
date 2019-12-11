@@ -41,6 +41,8 @@ packages:
 
 # Override default flag values for local packages and extra-deps
 # flags: {}
+ghc-options:
+  "$everything": -Wall -Widentities -Wredundant-constraints -Wmonomorphism-restriction -O3
 
 # Extra package databases containing global packages
 # extra-package-dbs: []

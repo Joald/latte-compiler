@@ -2,45 +2,45 @@
 module Main where
 
 
-import System.Environment (getArgs)
-import System.Exit (exitFailure)
+import System.IO ( stdin, hGetContents )
+import System.Environment ( getArgs, getProgName )
+import System.Exit ( exitFailure, exitSuccess )
 import Control.Monad (when)
-import Data.Either
 
 import BNFC.LexLatte
 import BNFC.ParLatte
+import BNFC.SkelLatte
 import BNFC.PrintLatte
 import BNFC.AbsLatte
+
+
+
+
 import BNFC.ErrM
 
-import Types.Typechecker
-
 type ParseFun a = [Token] -> Err a
+
+myLLexer = myLexer
 
 type Verbosity = Int
 
 putStrV :: Verbosity -> String -> IO ()
 putStrV v s = when (v > 1) $ putStrLn s
 
-runFile :: Verbosity -> ParseFun Program -> FilePath -> IO ()
+runFile :: (Print a, Show a) => Verbosity -> ParseFun a -> FilePath -> IO ()
 runFile v p f = putStrLn f >> readFile f >>= run v p
 
-run :: Verbosity -> ParseFun Program -> String -> IO ()
-run v p s = let ts = myLexer s in case p ts of
-           Bad err  -> do
-             putStrLn "ERROR\n"
-             putStrLn "\nParse Failed...\n"
-             putStrV v "Tokens:"
-             putStrV v $ show ts
-             putStrLn err
-             exitFailure
-           Ok  tree -> do
-             let typeCheckRes = typeCheck tree
-             if isRight typeCheckRes
-               then putStrLn "OK\n"
-               else do
-               putStrLn $ "ERROR\n" ++ fromLeft "" typeCheckRes
-               exitFailure
+run :: (Print a, Show a) => Verbosity -> ParseFun a -> String -> IO ()
+run v p s = let ts = myLLexer s in case p ts of
+           Bad s    -> do putStrLn "\nParse              Failed...\n"
+                          putStrV v "Tokens:"
+                          putStrV v $ show ts
+                          putStrLn s
+                          exitFailure
+           Ok  tree -> do putStrLn "\nParse Successful!"
+                          showTree v tree
+
+                          exitSuccess
 
 
 showTree :: (Show a, Print a) => Int -> a -> IO ()

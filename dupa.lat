@@ -1,0 +1,6 @@
+// Repeated argument name
+class DUPA {
+int f(int x, int x) {
+   return x;
+}
+}

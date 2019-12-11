@@ -1,0 +1,48 @@
+from os import system
+from sys import argv
+import subprocess
+
+
+yellow = "\u001b[33m"
+red = "\u001b[31m"
+blue = "\u001b[34m"
+cyan = "\u001b[36m"
+reset = "\u001b[0m"
+magenta = "\u001b[35m"
+bgwhite = "\u001b[47;1m"
+if len(argv) < 2:
+    dirr = "examples/bad"
+else:
+    dirr = argv[1]
+    while dirr.endswith("/"):
+        dirr = dirr[:-1]
+if len(argv) < 3:
+    cmd = ["stack", "run"]
+else:
+    cmd = argv[2].split(" ")
+if len(argv) < 4:
+    maks = 28
+else:
+    maks = int(argv[3])
+
+for i in range(1, maks):
+    f = dirr + "/bad0%s.lat" % str(i).zfill(2)
+    print(magenta + "FILE " + yellow + f + cyan)
+    system("cat " + f)
+    print(magenta + "FILE END")
+    res = subprocess.run(cmd + [f], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if res.returncode == 0:
+        print(green)
+    else:
+        print(red)
+    print(bgwhite)
+    print(res.stdout.decode("utf-8"))
+    print(res.stderr.decode("utf-8"))
+    print(reset)
+    if i == maks - 1:
+        break
+    a = input("Press Enter to continue, q to quit...\n")
+    if 'q' in a:
+        break
+    print("")
+print(reset)

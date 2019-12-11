@@ -2,3 +2,7 @@
 latte-compiler.cabal
 *~
 .idea
+out
+TAGS
+dist-newstyle
+examples/lattests
