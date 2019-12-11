@@ -4,52 +4,23 @@ import Prelude hiding (id) -- to avoid shadowing warnings
 
 import Control.Monad.Reader
 import Control.Monad.Tardis
-import Control.Monad.Except
+import Control.Monad.State
 
 import qualified Data.Map as Map
-import Data.Map ((!), Map)
-import Data.List (group, sort)
-
+import Data.Map ((!))
 
 import BNFC.AbsLatte hiding (Int, Bool, Void, Any)
 import qualified BNFC.AbsLatte as Latte
 import Utils
 import Types.Abs
 import Types.TypeError
-
-pairwiseDistinct :: Ord a => [a] -> Bool
-pairwiseDistinct = all (null . tail) . group . sort
-
-duplicates :: Ord a => [a] -> [a]
-duplicates = concat . filter (not . null) . map tail . group . sort
-
-emptyPair :: TypeDict
-emptyPair = (Map.fromList $ map (first Ident)
-                  [ ("printInt", Fun Latte.Void [Latte.Int])
-                  , ("printString", Fun Latte.Void [Str])
-                  , ("error", Fun Latte.Void [])
-                  , ("readInt", Fun Latte.Int [])
-                  , ("readString", Fun Str [])]
-            , Map.empty)
-
-pairMapUnion :: (Ord k1, Ord k2) => (Map k1 v1, Map k2 v2) -> (Map k1 v1, Map k2 v2) -> (Map k1 v1, Map k2 v2)
-pairMapUnion (m1, m2) (m1', m2') = (m1 `Map.union` m1', m2 `Map.union` m2')
-
-data Dir = Fwd | Bck deriving (Eq)
-
-changeTypeMap :: Bool -> (TypeMap -> TypeMap) -> TypeM ()
-changeTypeMap fwd = (if fwd then modifyForwards else modifyBackwards) . first
+import Types.Utils
 
 modifyBothWays :: (TypeDict -> TypeDict) -> TypeM ()
 modifyBothWays f = modifyBackwards f >> modifyForwards f
 
 typeCheck :: Program -> Either String TypeDict
 typeCheck (Program topDefs) = runTypeM $ checkTopDefs topDefs
-
-runTypeM :: TypeM () -> Either String TypeDict
-runTypeM m =
-  let (res, (st, _)) = runReader (runTardisT (runExceptT m) (emptyPair, emptyPair)) (Latte.Void, [])
-  in res >> return st
 
 checkTopDefs :: [TopDef] -> TypeM ()
 checkTopDefs topDefs = mapM_ checkTopDef topDefs
@@ -58,31 +29,38 @@ checkTopDef :: TopDef -> TypeM ()
 checkTopDef (TopFnDef fn) = do
   checkFnDef fn
   registerFnDef fn
+
 checkTopDef (StrDef id@(Ident name) inh mems) = enter ("class " ++ name) $ do
   mems' <- Map.fromList <$> mapM validateMember mems
   let cl = Class { className = id
                  , classBase = inhToIdent inh
-                 , classMembers = mems'
-                 }
+                 , classMembers = mems' }
   addClass id cl
+
+initState :: TypeM ()
+initState = do
+  (m1, _) <- getFuture
+  (m2, _) <- getPast
+  put $ m1 `Map.union` m2
+
+deinitState :: TypeM ()
+deinitState = put Map.empty
 
 checkFnDef :: FnDef -> TypeM ()
 checkFnDef (FnDef t id args bl@(Block stmts)) = enterFunction id t $ do
   validateType t
-  let dups = duplicates $ map (\(Arg _ id) -> id) args
+  let dups = duplicates $ map (\(Arg _ i) -> i) args
   unless (null dups) $ duplicateArgNames (head dups)
+  initState
   mapM_ registerArg args
   checkStmt (BStmt bl)
-  mapM_ deregisterArg args
+  deinitState
   unless (t == Latte.Void) $ checkRet stmts
 
 checkRet :: [Stmt] -> TypeM ()
 checkRet stmts = unless (go stmts) noReturn
   where
-    go :: [Stmt] -> Bool
-    go [] = False
-    go stmts = go' $ last stmts
-    go' :: Stmt -> Bool
+    go = any go'
     go' (Ret _) = True
     go' (BStmt (Block stmt)) = go stmt
     go' (CondElse _ stmt1 stmt2) = go' stmt1 && go' stmt2
@@ -98,21 +76,16 @@ inhToIdent (Extends id) = id
 
 registerFnDef :: FnDef -> TypeM ()
 registerFnDef fn@(FnDef _ id _ _) =
-  let f = first $ Map.insert id $ funDefType fn
-  in modifyForwards f >> modifyBackwards f
+  modifyBothWays $ first $ Map.insert id $ funDefType fn
+
 
 funDefType :: FnDef -> Type
 funDefType (FnDef ty _ args _) = Fun ty $ map (\(Arg t _) -> t) args
 
 registerArg :: Arg -> TypeM ()
-registerArg (Arg t id) = do
-  changeTypeMap True $ Map.insert id t
-  changeTypeMap False $ Map.delete id
-
-deregisterArg :: Arg -> TypeM ()
-deregisterArg (Arg t id) = do
-  changeTypeMap True $ Map.delete id
-  changeTypeMap False $ Map.insert id t
+registerArg (Arg t id) = modify $ Map.insert id t
+--  changeTypeMap True $ Map.insert id t
+--  changeTypeMap False $ Map.delete id
 
 enterFunction :: Ident -> Type -> TypeM () -> TypeM ()
 enterFunction (Ident name) t = enter ("function " ++ name) . local (first $ const t)
@@ -177,17 +150,10 @@ checkBlock (stmt:stmts) = enter ("statement " ++ show stmt) $
     Decl t items -> do
       items' <- mapM (validateItem t) items
       -- this means multiple declarations in one statement cannot depend on each other
-      pasMap <- getPast
-      changeTypeMap True $ Map.union $ Map.fromList items'
+      modify $ Map.union $ Map.fromList items'
       checkBlock stmts
-      sendFuture pasMap
     _ -> checkStmt stmt >> checkBlock stmts
 checkBlock [] = return ()
-
-cheat m = do
-  pasMap <- getPast
-  futMap <- getFuture
-  return ()
 
 getIdentDecls :: [Stmt] -> [Ident]
 getIdentDecls = concatMap extract
@@ -222,41 +188,46 @@ getClassMembers :: Ident -> TypeM TypeMap
 getClassMembers objid = classMembers <$> (getType objid >>= getClass)
 
 checkExpr :: Expr -> Type -> TypeM ()
-checkExpr e t = enter ("expression " ++ show e) (_checkExpr e t)
-_checkExpr (EVar id) t = hasType id t
-_checkExpr (ELitInt _) Latte.Int = return ()
-_checkExpr ELitTrue Latte.Bool = return ()
-_checkExpr ELitFalse Latte.Bool = return ()
-_checkExpr ENull (Struct _) = return ()
-_checkExpr ENull t = mustBeClass t
-_checkExpr (ENew id) t = unifyTypes (Struct id) t
-_checkExpr (EApp id exprs) t = do
-  ft <- getType id
-  case ft of
-    (Fun resType argTypes) -> do
-      unifyTypes resType t
+checkExpr _e _t = enter ("expression " ++ show _e) (_checkExpr _e _t)
+  where
+    _checkExpr (EVar id) t = hasType id t
+    _checkExpr (ELitInt _) Latte.Int = return ()
+    _checkExpr ELitTrue Latte.Bool = return ()
+    _checkExpr ELitFalse Latte.Bool = return ()
+    _checkExpr ENull (Struct _) = return ()
+    _checkExpr ENull t = mustBeClass t
+    _checkExpr (ENew id) t = unifyTypes (Struct id) t
+    _checkExpr (EApp id exprs) t = do
+      ft <- getType id
+      case ft of
+        (Fun resType argTypes) -> do
+          unifyTypes resType t
+          zipWithM_ checkExpr exprs argTypes
+        _ -> nonFunctionType id ft
+    _checkExpr (EString _) t = unifyTypes t Str
+    _checkExpr (ECast id) t = unifyTypes (Struct id) t
+    _checkExpr (EAcc objid memid) t = do
+      members <- getClassMembers objid
+      unless (memid `Map.member` members) $ memberNotFound objid memid
+      unifyTypes (members ! memid) t
+    _checkExpr (EMeth objid methid exprs) t = do
+      members <- getClassMembers objid
+      unless (methid `Map.member` members) $ memberNotFound objid methid
+      let ft@(Fun retType argTypes) = members ! methid
+      unless (isFunction ft) $ nonFunctionType methid ft
+      unifyTypes t retType
       zipWithM_ checkExpr exprs argTypes
-    _ -> nonFunctionType id ft
-_checkExpr (EString _) t = unifyTypes t Str
-_checkExpr (ECast id) t = unifyTypes (Struct id) t
-_checkExpr (EAcc objid memid) t = do
-  members <- getClassMembers objid
-  unless (memid `Map.member` members) $ memberNotFound objid memid
-  unifyTypes (members ! memid) t
-_checkExpr (EMeth objid methid exprs) t = do
-  members <- getClassMembers objid
-  unless (methid `Map.member` members) $ memberNotFound objid methid
-  let (Fun retType argTypes) = members ! methid
-  unifyTypes t retType
-  zipWithM_ checkExpr exprs argTypes
-_checkExpr (Neg expr) t = unifyTypes t Latte.Int >> checkExpr expr t
-_checkExpr (Not expr) t = unifyTypes t Latte.Bool >> checkExpr expr t
-_checkExpr (EMul e1 _ e2) t = unifyTypes t Latte.Int >> checkBin Latte.Int e1 e2
-_checkExpr (EAdd e1 _ e2) t = unifyTypes t Latte.Int >> checkBin Latte.Int e1 e2
-_checkExpr (ERel e1 _ e2) t = unifyTypes t Latte.Bool >> checkBin Latte.Int e1 e2
-_checkExpr (EAnd e1 e2) t = unifyTypes t Latte.Bool >> checkBin Latte.Bool e1 e2
-_checkExpr (EOr  e1 e2) t = unifyTypes t Latte.Bool >> checkBin Latte.Bool e1 e2
-_checkExpr e t = invalidExprType e t
+    _checkExpr (Neg expr) t = unifyTypes t Latte.Int >> checkExpr expr t
+    _checkExpr (Not expr) t = unifyTypes t Latte.Bool >> checkExpr expr t
+    _checkExpr (EMul e1 _ e2) t = unifyTypes t Latte.Int >> checkBin Latte.Int e1 e2
+    _checkExpr (EAdd e1 op e2) t =
+      if op == Plus && t == Str
+      then checkBin Str e1 e2
+      else unifyTypes t Latte.Int >> checkBin Latte.Int e1 e2
+    _checkExpr (ERel e1 _ e2) t = unifyTypes t Latte.Bool >> checkBin Latte.Int e1 e2
+    _checkExpr (EAnd e1 e2) t = unifyTypes t Latte.Bool >> checkBin Latte.Bool e1 e2
+    _checkExpr (EOr  e1 e2) t = unifyTypes t Latte.Bool >> checkBin Latte.Bool e1 e2
+    _checkExpr e t = invalidExprType e t
 
 checkBin :: Type -> Expr -> Expr -> TypeM ()
 checkBin t e1 e2 = checkExpr e1 t >> checkExpr e2 t

@@ -9,7 +9,7 @@ blue = "\u001b[34m"
 cyan = "\u001b[36m"
 reset = "\u001b[0m"
 magenta = "\u001b[35m"
-bgwhite = "\u001b[47;1m"
+bgwhite = ""#\u001b[47;1m"
 if len(argv) < 2:
     dirr = "examples/bad"
 else:

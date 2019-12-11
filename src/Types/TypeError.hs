@@ -2,19 +2,18 @@ module Types.TypeError where
 
 import Control.Monad.Reader
 import Control.Monad.Except
-import Control.Monad.Tardis
+import Control.Monad.State
 import Data.Map ((!))
 import qualified Data.Map as Map
 
-import BNFC.AbsLatte
+import BNFC.AbsLatte hiding (Int, Void, Bool)
+import qualified BNFC.AbsLatte as Latte
 import Types.Abs
 
 -- has to be here to be used in both TypeError.hs and Typecheck.hs
 getType :: Ident -> TypeM Type
 getType i = do
-  (typeMap1, _) <- getPast
-  (typeMap2, _) <- getFuture
-  let typeMap = typeMap1 `Map.union` typeMap2
+  typeMap <- get
   unless (i `Map.member` typeMap) $ identNotDeclared i
   return $ typeMap ! i
 
