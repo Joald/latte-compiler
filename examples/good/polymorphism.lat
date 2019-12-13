@@ -50,16 +50,6 @@ int main(){
     A z3 = fun2(new C);
     z3.print();
 
-    // Nadtyp w for-each (dla tablic obiektow).
-    C[] tab;
-    tab  = new C[3];
-    tab[0] = new C;
-    tab[1] = new D;
-    tab[2] = new D;
-    for (B elem : tab) {
-        fun2(elem).print();
-    }
-
     // Porownywanie z podtypem.
     B t1 = new B;
     A t2 = t1;

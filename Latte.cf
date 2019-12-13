@@ -14,12 +14,12 @@ Extends.   Inheritance ::= "extends" Ident ;
 
 NoInherit. Inheritance ::= "" ;
 
-FieldDecl. MemberDecl ::= Type Ident;
+FieldDecl. MemberDecl ::= Type Ident ";" ;
 
 MethDecl.  MemberDecl ::= FnDef ;
 
 
-separator MemberDecl ";" ;
+separator MemberDecl "" ;
 
 separator nonempty TopDef "" ;
 
@@ -78,6 +78,8 @@ Void.      Type ::= "void" ;
 Struct.    Type ::= Ident ;
 
 internal   Fun. Type ::= Type "(" [Type] ")" ;
+
+internal   Any. Type ::= "any" ;
 
 separator  Type "," ;
 

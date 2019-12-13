@@ -113,11 +113,10 @@ instance Print BNFC.AbsLatte.Inheritance where
 
 instance Print BNFC.AbsLatte.MemberDecl where
   prt i e = case e of
-    BNFC.AbsLatte.FieldDecl type_ id -> prPrec i 0 (concatD [prt 0 type_, prt 0 id])
+    BNFC.AbsLatte.FieldDecl type_ id -> prPrec i 0 (concatD [prt 0 type_, prt 0 id, doc (showString ";")])
     BNFC.AbsLatte.MethDecl fndef -> prPrec i 0 (concatD [prt 0 fndef])
   prtList _ [] = concatD []
-  prtList _ [x] = concatD [prt 0 x]
-  prtList _ (x:xs) = concatD [prt 0 x, doc (showString ";"), prt 0 xs]
+  prtList _ (x:xs) = concatD [prt 0 x, prt 0 xs]
 
 instance Print [BNFC.AbsLatte.MemberDecl] where
   prt = prtList
@@ -178,6 +177,7 @@ instance Print BNFC.AbsLatte.Type where
     BNFC.AbsLatte.Void -> prPrec i 0 (concatD [doc (showString "void")])
     BNFC.AbsLatte.Struct id -> prPrec i 0 (concatD [prt 0 id])
     BNFC.AbsLatte.Fun type_ types -> prPrec i 0 (concatD [prt 0 type_, doc (showString "("), prt 0 types, doc (showString ")")])
+    BNFC.AbsLatte.Any -> prPrec i 0 (concatD [doc (showString "any")])
   prtList _ [] = concatD []
   prtList _ [x] = concatD [prt 0 x]
   prtList _ (x:xs) = concatD [prt 0 x, doc (showString ","), prt 0 xs]

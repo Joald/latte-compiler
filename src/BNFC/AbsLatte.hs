@@ -48,7 +48,7 @@ data Item = NoInit Ident | Init Ident Expr
   deriving (Eq, Ord, Show, Read)
 
 data Type
-    = Int | Str | Bool | Void | Struct Ident | Fun Type [Type] | Any -- EDITED
+    = Int | Str | Bool | Void | Struct Ident | Fun Type [Type] | Any
   deriving (Eq, Ord, Show, Read)
 
 data Expr

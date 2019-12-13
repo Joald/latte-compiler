@@ -25,6 +25,7 @@ dependencies:
 - mtl
 - tardis
 - containers
+- hspec
 library:
   source-dirs: src
 

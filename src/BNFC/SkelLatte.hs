@@ -63,6 +63,7 @@ transType x = case x of
   Void -> failure x
   Struct ident -> failure x
   Fun type_ types -> failure x
+  Any -> failure x
 transExpr :: Expr -> Result
 transExpr x = case x of
   EVar ident -> failure x
