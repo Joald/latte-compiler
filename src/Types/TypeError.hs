@@ -81,3 +81,12 @@ voidVariable = typeError . VoidVariable
 
 functionNotCalled :: Ident -> TypeM a
 functionNotCalled = typeError . FunctionNotCalled
+
+fieldOverride :: Ident -> TypeM a
+fieldOverride = typeError . FieldOverride
+
+methodOverload :: Ident -> TypeM a
+methodOverload = typeError . MethodOverload
+
+integerConstantTooLarge :: Integer -> TypeM a
+integerConstantTooLarge = typeError . IntegerConstantTooLarge

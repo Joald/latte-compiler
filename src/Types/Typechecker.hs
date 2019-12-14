@@ -83,13 +83,39 @@ checkTopDef (StrDef id@(Ident name) inh mems) = enter ("class " ++ name) $ do
   st <- get
   modify $ Map.union mems'
   modify $ Map.insert (Ident "self") (Struct id)
-  mapM_ validateMember mems
+  mapM_ (validateMember id) mems
   put st
 checkTopDef (TopFnDef fn) = checkFnDef fn
 
-validateMember :: MemberDecl -> TypeM ()
-validateMember (MethDecl fn) = checkFnDef fn
-validateMember (FieldDecl t id) = checkVoidness t id >> validateType t
+validateMember :: Ident -> MemberDecl -> TypeM ()
+validateMember clsid (MethDecl fn) = do
+  checkOverride clsid fn
+  checkFnDef fn
+validateMember clsid (FieldDecl t id) = do
+  checkBaseMembers clsid id
+  checkVoidness t id
+  validateType t
+
+checkOverride :: Ident -> FnDef -> TypeM ()
+checkOverride clsid fndef = do
+  Class _ base _ <- getClassId clsid
+  _checkOverride base fndef
+  where
+    _checkOverride clsid fndef@(FnDef _ fnid _ _) = unless (clsid == noBaseClass) $ do
+      Class _ base mems <- getClassId clsid
+      when (fnid `Map.member` mems && mems ! fnid /= funDefType fndef) $ methodOverload fnid
+      _checkOverride base fndef
+
+checkBaseMembers :: Ident -> Ident -> TypeM ()
+checkBaseMembers clsid fldid = do
+  Class _ base _ <- getClassId clsid
+  _checkBaseMembers base fldid
+  where
+    _checkBaseMembers clsid fldid = unless (clsid == noBaseClass) $ do
+      Class _ base mems <- getClassId clsid
+      when (fldid `Map.member` mems) $ fieldOverride fldid
+      _checkBaseMembers base fldid
+
 
 checkInheritance :: Inheritance -> TypeM ()
 checkInheritance NoInherit = return ()
@@ -318,15 +344,12 @@ checkExpr _e _t = enter ("expression " ++ printTree _e) (_checkExpr _e _t)
   where
     _checkExpr :: Expr -> Type -> TypeM Type
     _checkExpr (EVar id) t = hasType id t
-    _checkExpr (ELitInt _) t = Latte.Int `mustBeType` t
+    _checkExpr (ELitInt c) t = checkBounds c >> Latte.Int `mustBeType` t
     _checkExpr ELitTrue t = Latte.Bool `mustBeType` t
     _checkExpr ELitFalse t = Latte.Bool `mustBeType` t
     _checkExpr ENull t@(Struct _) = return t
     _checkExpr ENull t = mustBeClass t
-    _checkExpr (ENew id) t = do
-      let t' = Struct id
-      t' `mustBeType` t
-      return t'
+    _checkExpr (ENew id) t = Struct id `mustBeType` t
     _checkExpr (EApp id exprs) t = do
       ft <- getType id
       case ft of
@@ -335,8 +358,8 @@ checkExpr _e _t = enter ("expression " ++ printTree _e) (_checkExpr _e _t)
           checkCall exprs argTypes
           return resType
         _ -> nonFunctionType id ft
-    _checkExpr (EString _) t = Str `mustBeType` t >> return Str
-    _checkExpr (ECast id) t = Struct id `mustBeType` t >> return (Struct id)
+    _checkExpr (EString _) t = Str `mustBeType` t
+    _checkExpr (ECast id) t = Struct id `mustBeType` t
     _checkExpr (EAcc objid memid) t = do
       t' <- checkMembership objid memid
       when (isFunction t') $ functionNotCalled memid
@@ -367,7 +390,9 @@ checkExpr _e _t = enter ("expression " ++ printTree _e) (_checkExpr _e _t)
         else checkBin Latte.Int e1 e2
     _checkExpr (EAnd e1 e2) t = Latte.Bool `mustBeType` t >> checkBin Latte.Bool e1 e2
     _checkExpr (EOr  e1 e2) t = Latte.Bool `mustBeType` t >> checkBin Latte.Bool e1 e2
---    _checkExpr e t = invalidExprType e t
+
+checkBounds :: Integer -> TypeM ()
+checkBounds i = when (i < -2^31 || 2^31 - 1 < i) $ integerConstantTooLarge i 
 
 checkBin :: Type -> Expr -> Expr -> TypeM Type
 checkBin (Latte.Any) _ _ = error "this should never happen"

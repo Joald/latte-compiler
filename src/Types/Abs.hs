@@ -78,6 +78,9 @@ data TypeError
   | RedefinedFunction Ident
   | VoidVariable Ident
   | FunctionNotCalled Ident
+  | FieldOverride Ident
+  | MethodOverload Ident
+  | IntegerConstantTooLarge Integer
 
 instance Show TypeError where
   show (TypeNotFound (Ident id)) = "type " ++ id ++ " not found"
@@ -98,30 +101,7 @@ instance Show TypeError where
   show (RedefinedFunction (Ident id)) = "Redefinition of function " ++ id
   show (VoidVariable (Ident id)) = "Declaration with type void of identifier " ++ id
   show (FunctionNotCalled (Ident id)) = "Function " ++ id ++ " not called"
-{-
-instance (MonadTardis bw fw m) => MonadTardis bw fw (ExceptT e m) where
-  getPast = lift getPast
-  getFuture = lift getFuture
-  sendFuture = lift . sendFuture
-  sendPast = lift . sendPast
+  show (FieldOverride (Ident id)) = "Field named " ++ id ++ " already exists in a base class"
+  show (MethodOverload (Ident id)) = "Method named " ++ id ++ "already defined with different type."
+  show (IntegerConstantTooLarge i) = "Integer constant " ++ show i ++ " out of bounds, must be in [2^31, 2^31 - 1]"
 
-instance (MonadTardis bw fw m) => MonadTardis bw fw (StateT s m) where
-  getPast = lift getPast
-  getFuture = lift getFuture
-  sendFuture = lift . sendFuture
-  sendPast = lift . sendPast
-
-instance (MonadTardis bw fw m) => MonadTardis bw fw (ReaderT r m) where
-  getPast = lift getPast
-  getFuture = lift getFuture
-  sendFuture = lift . sendFuture
-  sendPast = lift . sendPast
-
-instance (MonadFix m, MonadState s m) => MonadState s (TardisT bw fw m) where
-  get = lift get
-  put = lift . put
-
-instance (MonadFix m, MonadReader r m) => MonadReader r (TardisT bw fw m) where
-  ask = lift ask
-  local = mapTardisT . local
--}
