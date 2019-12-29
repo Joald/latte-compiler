@@ -15,22 +15,16 @@ import Control.Monad.Reader
 import Control.Monad.Except
 import Control.Monad.State
 
-import Data.Set (Set)
-import qualified Data.Set as Set
 import BNFC.AbsLatte hiding (Int, Void, Bool)
 import qualified BNFC.AbsLatte as Latte
 import BNFC.PrintLatte
 
-import Utils
 
 data Class = Class
   { className :: Ident
   , classBase :: Ident
   , classMembers :: Map Ident Type
   } deriving (Eq, Ord, Show, Read)
-
-dummyClass :: Class
-dummyClass = Class (Ident "") (Ident "") Map.empty
 
 type TypeMap = Map Ident Type
 type ClassMap = Map Ident Class
@@ -43,21 +37,6 @@ type TypeM =
 
 type RT = (Type, [String], ClassMap)
 
-
-runTypeM :: TypeM a -> Either String a
-runTypeM m = runTypeMWithClassMap m Map.empty
-
-runTypeMWithClassMap :: TypeM a -> ClassMap -> Either String a
-runTypeMWithClassMap m cls =
-  evalState (runReaderT (runExceptT m) (Latte.Void, [], cls)) baseMap
-
-baseMap :: TypeMap
-baseMap = Map.fromList $ map (first Ident)
-                  [ ("printInt", Fun Latte.Void [Latte.Int])
-                  , ("printString", Fun Latte.Void [Str])
-                  , ("error", Fun Latte.Void [])
-                  , ("readInt", Fun Latte.Int [])
-                  , ("readString", Fun Str [])]
 
 data TypeError
   = TypeNotFound Ident

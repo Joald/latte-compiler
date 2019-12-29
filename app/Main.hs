@@ -4,48 +4,36 @@ module Main where
 
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
-import Control.Monad (when)
-import Data.Either
 
 import BNFC.LexLatte
 import BNFC.ParLatte
-import BNFC.PrintLatte
 import BNFC.AbsLatte
 import BNFC.ErrM
 
 import Types.Typechecker
-
+import CodeGen.CodeGen (interpQuad)
+import Utils
 type ParseFun a = [Token] -> Err a
 
-type Verbosity = Int
+runFile :: ParseFun Program -> FilePath -> IO ()
+runFile p f = readFile f >>= run p
 
-putStrV :: Verbosity -> String -> IO ()
-putStrV v s = when (v > 1) $ putStrLn s
-
-runFile :: Verbosity -> ParseFun Program -> FilePath -> IO ()
-runFile v p f = readFile f >>= run v p
-
-run :: Verbosity -> ParseFun Program -> String -> IO ()
-run v p s = let ts = myLexer s in case p ts of
+run :: ParseFun Program -> String -> IO ()
+run p s = let ts = myLexer s in case p ts of
            Bad err  -> do
-             putStrLn "ERROR\n"
-             putStrLn "\nParse Failed...\n"
-             putStrLn err
+             putErrLn "ERROR"
+             putErrLn "\nParse Failed...\n"
+             putErrLn err
              exitFailure
-           Ok  tree -> do
-             let typeCheckRes = typeCheck tree
-             if isRight typeCheckRes
-               then putStrLn "OK\n"
-               else do
-               putStrLn $ "ERROR\n" ++ fromLeft "" typeCheckRes
+           Ok  tree -> case typeCheck tree of
+             Right clsMap -> do
+               putErrLn "OK"
+               interpQuad clsMap tree
+             Left err ->  do
+               putErrLn $ "ERROR\n" ++ err
                exitFailure
 
 
-showTree :: (Show a, Print a) => Int -> a -> IO ()
-showTree v tree
- = do
-      putStrV v $ "\n[Abstract Syntax]\n\n" ++ show tree
-      putStrV v $ "\n[Linearized tree]\n\n" ++ printTree tree
 
 usage :: IO ()
 usage = do
@@ -63,11 +51,6 @@ main = do
   args <- getArgs
   case args of
     ["--help"] -> usage
-    [] -> getContents >>= run 2 pProgram
-    "-s":fs -> mapM_ (runFile 0 pProgram) fs
-    fs -> mapM_ (runFile 2 pProgram) fs
-
-
-
-
+    "-s":fs -> mapM_ (runFile pProgram) fs
+    fs -> mapM_ (runFile pProgram) fs
 

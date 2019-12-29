@@ -1,0 +1,287 @@
+module CodeGen.CodeGen where
+
+import Control.Monad.Reader
+import Control.Monad.State
+import Control.Monad.Writer
+
+import qualified Data.Map as Map
+import Data.Map ((!))
+
+import BNFC.AbsLatte hiding (Int, Void, Bool)
+import qualified BNFC.AbsLatte as Latte
+
+import Utils
+import Types.Abs
+import CodeGen.Abs
+import CodeGen.Utils
+import CodeGen.QInter
+
+import Debug.Trace
+import BNFC.PrintLatte
+
+
+codeGen :: ClassMap -> Program -> String
+codeGen cls prog =
+  concatMap showAsm $ quadToAsm $ execCodeGen (compileProgram prog) cls
+
+interpQuad :: ClassMap -> Program -> IO ()
+interpQuad cls prog =
+  let (localCounts, quads) = runCodeGen (compileProgram prog) $! cls
+      localCountMap = Map.fromList localCounts
+  in qInter cls localCountMap quads
+
+quadToAsm :: [Quad] -> [Asm]
+quadToAsm = undefined
+
+execCodeGen :: CodeGen a -> ClassMap -> [Quad]
+execCodeGen cg = snd . runCodeGen cg
+
+runCodeGen :: CodeGen a -> ClassMap -> (a, [Quad])
+runCodeGen cg m = evalState (runReaderT (runWriterT cg) (m, noBaseClass, Map.empty)) 0
+
+type LocalCount = (Label, Integer)
+
+compileProgram :: Program -> CodeGen [LocalCount]
+compileProgram (Program topDefs) = concatMapM compileTopDef topDefs
+
+compileTopDef :: TopDef -> CodeGen [LocalCount]
+compileTopDef (StrDef n _ mems) = enterClass n $ concatMapM compileMember mems
+compileTopDef (TopFnDef fndef) = compileFunction fndef
+
+compileMember :: MemberDecl -> CodeGen [LocalCount]
+compileMember (FieldDecl _ _) = return []
+compileMember (MethDecl fndef) = compileFunction fndef
+
+isInClass :: CodeGen Bool
+isInClass = liftM (/= noBaseClass) getCurrentClass
+
+compileFunction :: FnDef -> CodeGen [LocalCount]
+compileFunction (FnDef t name args (Block stmts)) = do
+  isMethod <- isInClass
+  let argNames = map getArgName args
+      argNames' = if isMethod then Ident "self" : argNames else argNames
+      args' = zip argNames' $ map (Loc LArg) [1..]
+      stmts' = runLocalMangler stmts
+      localNames = concatMap getIdentDeclsDeep stmts'
+      locals = zip localNames $ map (Loc LLocal) [1..]
+      env = Map.fromList $ args' ++ locals
+  mangled <- mangle name
+  label mangled
+  traceM $ show locals
+  traceM $ printTree stmts'
+  local (third $ const env) $ compileStmts stmts'
+  when (t == Latte.Void) ret
+  return [(name, toInteger $ length localNames)]
+
+noClass :: Ident
+noClass = Ident ""
+
+mangle :: Ident -> CodeGen Ident
+mangle name = do
+  clsName <- getCurrentClass
+  return $ if clsName == noClass
+    then name
+    else mangler clsName name
+
+compileStmts :: [Stmt] -> CodeGen ()
+compileStmts = mapM_ compileStmt
+
+compileStmt :: Stmt -> CodeGen ()
+compileStmt Empty = return ()
+compileStmt (BStmt (Block stmts)) = compileStmts stmts
+compileStmt (Decl t items) = mapM_ (flip compileItem t) items
+compileStmt (Ass name expr) = do
+  val <- compileExpr expr
+  loc <- getLoc name
+  tell [QCopy (VLoc loc) val]
+compileStmt (MemAss objName memName expr) = do
+  val <- compileExpr expr
+  objVal <- VLoc <$> getLoc objName
+  tell [QMemberAss objVal memName val]
+compileStmt (Incr name) = do
+  v <- getVal name
+  tell [QBin v v (OAdd Plus) (VImm 1)]
+compileStmt (Decr name) = do
+  v <- getVal name
+  tell [QBin v v (OAdd Minus) (VImm 1)]
+compileStmt (Ret e) = do
+  v <- compileExpr e
+  tell [QRet v]
+compileStmt VRet = tell [QVRet]
+compileStmt (Cond cond stmt) = do
+  l1 <- freshLabel
+  l2 <- freshLabel
+  compileCond cond l1 l2
+  label l1
+  compileStmt stmt
+  label l2
+compileStmt (CondElse cond s1 s2) = do
+  l1 <- freshLabel
+  l2 <- freshLabel
+  l3 <- freshLabel
+  compileCond cond l1 l2
+  label l1
+  compileStmt s1
+  goto l3
+  label l2
+  compileStmt s2
+  label l3
+compileStmt (While cond s) = do
+  loop <- freshLabel
+  checkCond <- freshLabel
+  endLoop <- freshLabel
+  goto checkCond
+  label loop
+  compileStmt s
+  label checkCond
+  compileCond cond loop endLoop
+  label endLoop
+compileStmt (StExp expr) = void $ compileExpr expr
+
+freshLabel :: CodeGen Ident
+freshLabel = do
+  i <- get
+  put (i + 1)
+  return (Ident ("Label" ++ show i))
+
+freshReg :: CodeGen Val
+freshReg = do
+  i <- get
+  put (i + 1)
+  return (VReg i)
+
+label :: Ident -> CodeGen ()
+label name = tell [QLabel name]
+
+goto :: Ident -> CodeGen ()
+goto l = tell [QGoto l]
+
+ret :: CodeGen ()
+ret = tell [QVRet]
+
+getVal :: Ident -> CodeGen Val
+getVal = fmap VLoc . getLoc
+
+getLoc :: Ident -> CodeGen Loc
+getLoc ident = do
+  locMap <- getLocMap
+  return $ locMap ! ident
+
+compileExpr :: Expr -> CodeGen Val
+compileExpr (EVar v) = getVal v
+compileExpr (ELitInt i) = return $ VImm i
+compileExpr ELitTrue = return true
+compileExpr ELitFalse = return false
+compileExpr ENull = return VNullptr
+compileExpr (ENew name) = do
+  r <- freshReg
+  tell [QNew r name]
+  return r
+compileExpr (EApp fname args) = do
+  
+  vs <- mapM compileExpr args
+  r <- freshReg
+  tell [QCall r fname vs]
+  return r
+compileExpr (EString s) = return (VStr s)
+compileExpr (ECast _) = return VNullptr
+compileExpr (EAcc objName memName) = VMember <$> getVal objName <*> pure memName
+compileExpr (EMeth objName methName args) = do
+  v <- getVal objName
+  vs <- mapM compileExpr args
+  r <- freshReg
+  tell [QMethCall r v methName vs]
+  return r
+compileExpr (Neg e) = compileUnOp ONeg e
+compileExpr (Not e) = compileUnOp ONot e
+compileExpr (EMul e1 op e2) = compileBinOp e1 (OMul op) e2
+compileExpr (EAdd e1 op e2) = compileBinOp e1 (OAdd op) e2
+compileExpr (ERel e1 op e2) = compileBinOp e1 (ORel op) e2
+compileExpr (EAnd e1 e2) = do
+  v <- compileExpr e1
+  r <- freshReg
+  l <- freshLabel
+  end <- freshLabel
+  jumpIf v EQU false l
+  v2 <- compileExpr e2
+  tell [QCopy r v2]
+  goto end
+  label l
+  tell [QCopy r false]
+  label end
+  return r
+compileExpr (EOr e1 e2) = do
+  v <- compileExpr e1
+  r <- freshReg
+  l <- freshLabel
+  end <- freshLabel
+  jumpIf v EQU true l
+  v2 <- compileExpr e2
+  tell [QCopy r v2]
+  goto end
+  label l
+  tell [QCopy r true]
+  label end
+  return r
+
+compileUnOp :: UnOp -> Expr -> CodeGen Val
+compileUnOp op e = do
+  v <- compileExpr e
+  r <- freshReg
+  tell [QUn r op v]
+  return r
+compileBinOp :: Expr -> Op -> Expr -> CodeGen Val
+compileBinOp e1 op e2 = do
+  v1 <- compileExpr e1
+  v2 <- compileExpr e2
+  r <- freshReg
+  tell [QBin r v1 op v2]
+  return r
+
+compileCond :: Expr -> Label -> Label -> CodeGen ()
+compileCond e ifTrue ifFalse = go e
+  where
+    go ELitTrue = goto ifTrue
+    go ELitFalse = goto ifFalse
+    go (EVar v) = do
+      v' <- getVal v
+      jumpIf v' EQU true ifTrue
+      goto ifFalse
+    go (Not e') = compileCond e' ifFalse ifTrue
+    go (EAnd e1 e2) = do
+      l <- freshLabel
+      compileCond e1 l ifFalse
+      label l
+      compileCond e2 ifTrue ifFalse
+    go (EOr e1 e2) = do
+      l <- freshLabel
+      compileCond e1 ifTrue l
+      label l
+      compileCond e2 ifTrue ifFalse
+    go (ERel e1 op e2) = do
+      v1 <- compileExpr e1
+      v2 <- compileExpr e2
+      jumpIf v1 op v2 ifTrue
+      goto ifFalse
+    go e' = do
+      v <- compileExpr e'
+      jumpIf v EQU true ifTrue
+      goto ifFalse
+
+true :: Val
+true = VImm 1
+
+false :: Val
+false = VImm 0
+
+jumpIf :: Val -> RelOp -> Val -> Label -> CodeGen ()
+jumpIf v1 op v2 l = tell [QCond v1 op v2 l]
+
+compileItem :: Item -> Type -> CodeGen ()
+compileItem (NoInit name) Str = do
+  v <- getVal name
+  tell [v $= VStr ""]
+compileItem (NoInit name) _ = do
+  v <- getVal name
+  tell [v $= VImm 0]
+compileItem (Init name e) _ = compileStmt $ Ass name e

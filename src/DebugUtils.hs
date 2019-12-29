@@ -13,7 +13,8 @@ import Data.Maybe
 import Control.Monad.Reader
 import Control.Monad.State
 import Control.Monad.Except
-import BNFC.AbsLatte
+import BNFC.AbsLatte hiding (Int, Void, Bool)
+import qualified BNFC.AbsLatte as Latte
 import BNFC.ParLatte
 import BNFC.ErrM
 
@@ -30,3 +31,8 @@ parse s = do
   let ts = myLexer p
   return ((\(Ok tr) -> tr) $ pProgram ts)
 
+getMain :: Program -> [Stmt]
+getMain (Program topDefs) = selectMain topDefs
+selectMain :: [TopDef] -> [Stmt]
+selectMain (TopFnDef (FnDef Latte.Int (Ident "main") [] (Block stmts)):_) = stmts
+selectMain (_:tds) = selectMain tds

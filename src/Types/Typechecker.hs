@@ -18,10 +18,10 @@ import Types.Abs
 import Types.TypeError
 import Types.Utils
 
-typeCheck :: Program -> Either String TypeDict
+typeCheck :: Program -> Either String ClassMap
 typeCheck (Program topDefs) =
   let cls = collectClasses topDefs
-  in runTypeMWithClassMap (checkTopDefs topDefs) cls
+  in runTypeMWithClassMap (checkTopDefs topDefs) cls >> return cls
 
 checkTopDefs :: [TopDef] -> TypeM TypeDict
 checkTopDefs topDefs = do
@@ -39,12 +39,9 @@ checkTopDefs topDefs = do
 
 checkClassMap :: TypeM ()
 checkClassMap = do
-  m <- thd3 <$> ask
+  m <- getClassMap
   let res = findCycles m
   unless (isNothing res) $ typeError $ fromJust res
-
-noBaseClass :: Ident
-noBaseClass = Ident ""
 
 findCycles :: ClassMap -> Maybe TypeError
 findCycles m = go (Map.toList m)
@@ -149,67 +146,6 @@ checkRet stmts = unless (go stmts) noReturn
     go' (While cond stmt) = isTrivially True cond && go' stmt
     go' _ = False
 
-isTrivially :: Bool -> Expr -> Bool
-isTrivially True ELitTrue = True
-isTrivially False ELitFalse = True
-isTrivially True (Neg e) = isTrivially False e
-isTrivially False (Neg e) = isTrivially True e
-isTrivially True (EAnd e1 e2) = isTrivially True e1 && isTrivially True e2
-isTrivially False (EAnd e1 e2) = isTrivially False e1 || isTrivially False e2
-isTrivially True (EOr e1 e2) = isTrivially True e1 || isTrivially True e2
-isTrivially False (EOr e1 e2) = isTrivially False e1 && isTrivially False e2
-isTrivially True (ERel e1 EQU e2) = hasNoSideEffects e1 && hasNoSideEffects e2 && e1 == e2
-isTrivially False (ERel e1 EQU e2) = hasNoSideEffects e1 && hasNoSideEffects e2 && e1 /= e2
-isTrivially True (ERel e1 NE e2) = isTrivially False (ERel e1 EQU e2)
-isTrivially False (ERel e1 NE e2) = isTrivially True (ERel e1 EQU e2)
-isTrivially res (ERel e1 op e2) =
-  let val1 = evalConstExpr e1 in
-    let val2 = evalConstExpr e2 in
-      res == fromMaybe False (mapOp op <$> val1 <*> val2)
-isTrivially _ _ = False
-
-hasNoSideEffects :: Expr -> Bool
-hasNoSideEffects (EApp _ _) = False
-hasNoSideEffects (EMeth _ _ _) = False
-hasNoSideEffects (Neg e) = hasNoSideEffects e
-hasNoSideEffects (Not e) = hasNoSideEffects e
-hasNoSideEffects (EMul e1 _ e2) = hasNoSideEffects e1 && hasNoSideEffects e2
-hasNoSideEffects (EAdd e1 _ e2) = hasNoSideEffects e1 && hasNoSideEffects e2
-hasNoSideEffects (ERel e1 _ e2) = hasNoSideEffects e1 && hasNoSideEffects e2
-hasNoSideEffects (EAnd e1 e2) = hasNoSideEffects e1 && hasNoSideEffects e2
-hasNoSideEffects (EOr e1 e2) = hasNoSideEffects e1 && hasNoSideEffects e2
-hasNoSideEffects _ = True
-
-evalConstExpr :: Expr -> Maybe Integer
-evalConstExpr (ELitInt i) = Just i
-evalConstExpr (EMul e1 Times e2) = (*) <$> evalConstExpr e1 <*> evalConstExpr e2
-evalConstExpr (EMul e1 Div e2) =
-  div <$> evalConstExpr e1 <*> checkNonZero (evalConstExpr e2)
-evalConstExpr (EMul e1 Mod e2) =
-  mod <$> evalConstExpr e1 <*> checkNonZero (evalConstExpr e2)
-evalConstExpr (EAdd e1 Plus e2) = (+) <$> evalConstExpr e1 <*> evalConstExpr e2
-evalConstExpr (EAdd e1 Minus e2) = (-) <$> evalConstExpr e1 <*> evalConstExpr e2
-evalConstExpr _ = Nothing
-
-checkNonZero :: (Num a, Ord a)  => Maybe a -> Maybe a
-checkNonZero (Just 0) = Nothing
-checkNonZero m = m
-
-mapOp :: Ord a => RelOp -> a -> a -> Bool
-mapOp LTH = (<)
-mapOp LE = (<=)
-mapOp GTH = (>)
-mapOp GE = (>=)
-mapOp _ = (\_ _ -> False)
-
-
-inhToIdent :: Inheritance -> Ident
-inhToIdent NoInherit = Ident ""
-inhToIdent (Extends id) = id
-
-funDefType :: FnDef -> Type
-funDefType (FnDef ty _ args _) = Fun ty $ map (\(Arg t _) -> t) args
-
 registerArg :: Arg -> TypeM ()
 registerArg (Arg t id) = do
   when (t == Latte.Void) $ voidArg id
@@ -228,13 +164,13 @@ validateType (Struct id) = do
 validateType _ = return ()
 
 currentRetType :: TypeM Type
-currentRetType = fst3 <$> ask
+currentRetType = asks fst3
 
 checkStmt :: Stmt -> TypeM ()
 checkStmt s = enter ("statement " ++ printTree s) (_checkStmt s)
   where
     _checkStmt (BStmt (Block stmts)) = enter "block" $ do
-      let dups = duplicates $ getIdentDecls stmts
+      let dups = duplicates $ concatMap getIdentDecls stmts
       unless (null dups) $ redeclaration $ head dups
       checkBlock stmts
     _checkStmt (Decl t items) = mapM_ (validateItem t) items
@@ -263,9 +199,6 @@ hasType id t = do
   t' `mustBeType` t
   when (isFunction t') $ functionNotCalled id
   return t'
-
-unIdent :: Ident -> String
-unIdent (Ident id) = id
 
 isBaseOf :: Type -> Type -> TypeM Bool
 tSub `isBaseOf` tBase =
@@ -304,11 +237,6 @@ checkBlock (stmt:stmts) =
     _ -> checkStmt stmt >> checkBlock stmts
 checkBlock [] = return ()
 
-getIdentDecls :: [Stmt] -> [Ident]
-getIdentDecls = concatMap extract
-  where
-    extract (Decl _ items) = map itemName items
-    extract _ = []
 
 validateItem :: Type -> Item -> TypeM (Ident, Type)
 validateItem t (NoInit id) = checkVoidness t id >> return (id, t)
@@ -320,18 +248,8 @@ validateItem t (Init id expr) = do
 checkVoidness :: Type -> Ident -> TypeM ()
 checkVoidness t id = when (t == Latte.Void) $ voidVariable id
 
-itemName :: Item -> Ident
-itemName (NoInit id) = id
-itemName (Init id _) = id
-
-
-getMember :: MemberDecl -> (Ident, Type)
-getMember (FieldDecl t id) = (id, t)
-getMember (MethDecl fn@(FnDef _ id _ _)) = (id, funDefType fn)
-
 getClassMap :: TypeM ClassMap
-getClassMap = thd3 <$> ask
-
+getClassMap = asks thd3
 
 existsClass :: Ident -> TypeM Bool
 existsClass id = Map.member id <$> getClassMap
