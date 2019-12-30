@@ -27,13 +27,16 @@ if len(argv) < 3:
 else:
     cmd = argv[2].split(" ")
 
-if system("stack build") != 0:
-    exit()
 
 passed = 0
 total = 0
+
+quitting = False
+resetting = True
+autoplaying = False
+
 def runFile(f):
-    global total, passed
+    global total, passed, quitting, resetting, autoplaying
     total += 1
     print(magenta + "FILE " + yellow + f + cyan)
     
@@ -47,6 +50,7 @@ def runFile(f):
         print(green)
         passed += 0 if running else 1
     else:
+        autoplaying = False
         print(red)
 
     
@@ -60,23 +64,44 @@ def runFile(f):
             print(green + "OUTPUT OK")
             passed += 1
         else:
+            autoplaying = False
             print(red + "OUTPUT DIFFERS")
+            print(reset + "Expected:")
+            print(green + outFile)
+            print(reset + "Got:")
+            print(yellow + out)
+
             
 
     print(reset)
-    a = input("Press Enter to continue, q to quit...\n")
-    if 'q' in a:
-        return True
+    if not autoplaying:
+        a = input("Press Enter to continue, q to quit, a to autoplay, r to restart...\n")
+        if 'q' in a:
+            quitting = True
+            return
+        if 'a' in a:
+            autoplaying = True
+            return
+        if 'r' in a:
+            resetting = True
+            return
+
     print("")
-    return False
 
 print(reset)
 
-for f in listdir(dirr):
-    if f.endswith(".lat") and runFile(dirr + "/" + f):
-        break
+
+while resetting:
+    if system("stack build") != 0:
+        exit()
+    resetting = False
+    for f in listdir(dirr):
+        if f.endswith(".lat"):
+            runFile(dirr + "/" + f)
+            if quitting or resetting:
+                break
 
 print(reset)
 
-print("\n\n\nPassed: [%s%s%s/%s%s]" % (green if passed == total else red if passed == 0 else yellow, passed, reset, green, total))
+print("\n\n\nPassed: [%s%s%s/%s%s%s]" % (green if passed == total else red if passed == 0 else yellow, passed, reset, green, total, reset))
 

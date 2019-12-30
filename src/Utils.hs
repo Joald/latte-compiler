@@ -14,6 +14,7 @@ import qualified Data.Map as Map
 
 import CodeGen.Abs
 import BNFC.AbsLatte hiding (Int, Bool, Void)
+import Types.Abs
 
 putErr :: String -> IO ()
 putErr = hPutStr stderr
@@ -98,7 +99,7 @@ funDefType :: FnDef -> Type
 funDefType (FnDef ty _ args _) = Fun ty $ map (\(Arg t _) -> t) args
 
 unIdent :: Ident -> String
-unIdent (Ident id) = id 
+unIdent (Ident id) = id
 
 getIdentDecls :: Stmt -> [Ident]
 getIdentDecls (Decl _ items) = map itemName items
@@ -242,4 +243,52 @@ mreplace v = asks $ Map.findWithDefault v v
 
 localUnion :: (Ord k, MonadReader (Map k v) m) => Map k v -> m a -> m a
 localUnion = local . Map.union
+
+getClass :: ClassMappable m => Ident -> m Class
+getClass id = (!id) <$> getClassMap
+
+getAllFields :: ClassMappable m => Ident -> m [(Ident, Type)]
+getAllFields name = if name == noBaseClass then return [] else do
+  cls@(Class _ base mems) <- getClass name
+  let fldNames = getFields cls
+      flds = zip fldNames $ map (mems!) fldNames
+  rest <- getAllFields base
+  return $ rest ++ flds
+
+getAllMethods :: ClassMappable m => Ident -> m [(Ident, Ident)] -- pair of mangled, unmangled name
+getAllMethods name = if name == noBaseClass then return [] else do
+  cls@(Class _ base _) <- getClass name
+  let methNames = getMethods cls
+      mangledNames = map (mangler name) methNames
+  rest <- getAllMethods base
+  let rest' = filter (not . (`elem` methNames)) $ map snd rest
+      rest'' = zip (map (mangler name) rest') rest'
+  return $ rest'' ++ zip mangledNames methNames
+
+isAMethod :: ClassMappable m => Ident -> Ident -> m Bool
+isAMethod methName clsName = (methName `elem`) . map fst <$> getAllMethods clsName
+
+getMethods :: Class -> [Ident]
+getMethods = map fst . filter (not . isField . snd) . Map.toList . classMembers
+
+getFields :: Class -> [Ident]
+getFields = map fst . filter (isField . snd) . Map.toList . classMembers
+
+isField :: Type -> Bool
+isField (Fun _ _) = False
+isField _ = True
+
+
+methodMarker :: String
+methodMarker = "__method__ "
+
+markMethod :: Ident -> Ident
+markMethod = mapIdent (methodMarker ++)
+
+mangler :: Ident -> Ident -> Ident
+mangler id1 = mapIdent _mangler
+  where _mangler id2 = unIdent id1 ++ '_' : id2
+
+mapIdent :: (String -> String) -> Ident -> Ident
+mapIdent f (Ident x) = Ident (f x)
 

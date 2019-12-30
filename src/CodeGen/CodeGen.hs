@@ -58,20 +58,22 @@ isInClass = liftM (/= noBaseClass) getCurrentClass
 compileFunction :: FnDef -> CodeGen [LocalCount]
 compileFunction (FnDef t name args (Block stmts)) = do
   isMethod <- isInClass
+  clsName <- asks snd3
+  fields <- getAllFields clsName
   let argNames = map getArgName args
       argNames' = if isMethod then Ident "self" : argNames else argNames
       args' = zip argNames' $ map (Loc LArg) [1..]
-      stmts' = runLocalMangler stmts
+      stmts' = runLocalMangler stmts 
       localNames = concatMap getIdentDeclsDeep stmts'
       locals = zip localNames $ map (Loc LLocal) [1..]
-      env = Map.fromList $ args' ++ locals
+      fieldNames = map fst fields
+      fields' = zip fieldNames $ map (Loc LObj) [1..]
+      env = Map.fromList $ args' ++ locals ++ fields'
   mangled <- mangle name
   label mangled
-  traceM $ show locals
-  traceM $ printTree stmts'
   local (third $ const env) $ compileStmts stmts'
   when (t == Latte.Void) ret
-  return [(name, toInteger $ length localNames)]
+  return [(mangled, toInteger $ length localNames)]
 
 noClass :: Ident
 noClass = Ident ""
@@ -96,8 +98,8 @@ compileStmt (Ass name expr) = do
   tell [QCopy (VLoc loc) val]
 compileStmt (MemAss objName memName expr) = do
   val <- compileExpr expr
-  objVal <- VLoc <$> getLoc objName
-  tell [QMemberAss objVal memName val]
+  objVal <- getVal objName
+  tell [QCopy (VMember objVal memName) val]
 compileStmt (Incr name) = do
   v <- getVal name
   tell [QBin v v (OAdd Plus) (VImm 1)]
@@ -178,10 +180,12 @@ compileExpr (ENew name) = do
   tell [QNew r name]
   return r
 compileExpr (EApp fname args) = do
-  
   vs <- mapM compileExpr args
+  isMethod <- isInClass
+  isMethod' <- if isMethod then getCurrentClass >>= isAMethod fname else return isMethod
+  let vs' = if isMethod' then VLoc (Loc LArg 1):vs else vs
   r <- freshReg
-  tell [QCall r fname vs]
+  tell [QCall r fname vs']
   return r
 compileExpr (EString s) = return (VStr s)
 compileExpr (ECast _) = return VNullptr
@@ -190,7 +194,7 @@ compileExpr (EMeth objName methName args) = do
   v <- getVal objName
   vs <- mapM compileExpr args
   r <- freshReg
-  tell [QMethCall r v methName vs]
+  tell [QCall r (markMethod methName) (v:vs)]
   return r
 compileExpr (Neg e) = compileUnOp ONeg e
 compileExpr (Not e) = compileUnOp ONot e

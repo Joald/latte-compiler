@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeSynonymInstances, FlexibleInstances #-}
 module CodeGen.QInter where
 
 import Control.Monad.Reader
@@ -13,7 +14,7 @@ import Data.Maybe
 import Data.Bits
 import System.Exit (exitFailure)
 import CodeGen.Abs
-import CodeGen.Utils (getFields, mangler)
+import CodeGen.Utils
 import Types.Abs
 import Utils
 
@@ -56,9 +57,6 @@ getInstrAt i = askMap i fst4
 getLabelPos :: Label -> QInter Integer
 getLabelPos l = askMap l snd4
 
-getClass :: Ident -> QInter Class
-getClass name = askMap name thd4
-
 getStack :: QInter QStack
 getStack = gets thd3
 
@@ -88,6 +86,9 @@ data V = VInt Integer | VString String | VObj Label [V] | VVoid | VAddr Integer
 
 type QInter = StateT QSt (ReaderT QEnv IO)
 
+instance ClassMappable QInter where
+  getClassMap = asks thd4
+
 getLabel :: (Integer, Quad) -> [(Label, Integer)]
 getLabel (i, QLabel l) = [(l, i)]
 getLabel _ = []
@@ -116,18 +117,61 @@ callBuiltin (Ident name) arg =
 call :: Label -> [V] -> QInter V
 call name args =
   if name `elem` builtins then callBuiltin name args else do
-    sf <- createStackFrame name args
-    p <- getLabelPos name
-    liftIO $ putErrLn $ "Calling fn " ++ unIdent name ++ " with " ++ show args
+    name' <- polymorphise name args
+    sf <- createStackFrame name args -- old name to detect methods
+    p <- getLabelPos name'
+    heap <- getHeap
+    deb $ "Heap is " ++ show heap
+    deb $ "Calling fn " ++ unIdent name' ++ " with " ++ show args ++ " \n    and stack frame " ++ show sf
     newStackFrame sf $ run (p + 1)
+
+markerLength :: Int
+markerLength = length methodMarker
+
+isMarked :: Ident -> Bool
+isMarked name = take markerLength (unIdent name) == methodMarker
+
+unMark :: Ident -> Ident
+unMark = mapIdent $ drop markerLength
+
+polymorphise :: Ident -> [V] -> QInter Ident
+polymorphise name args =
+  if not (isMarked name) || null args
+  then return name
+  else do
+    let realName = unMark name
+        VAddr addr = head args
+    VObj clsName _ <- getHeapVal addr
+    clsName' <- virtLookup clsName realName
+    return $ mangler clsName' realName
+
+virtLookup :: Ident -> Ident -> QInter Ident
+virtLookup clsName methName = do
+  Class _ base members <- getClass clsName
+  if methName `Map.member` members
+    then return clsName
+    else virtLookup base methName
+
+fieldsFromMethName :: Label -> [V] -> QInter [(Loc, V)]
+fieldsFromMethName name args =
+  if not (isMarked name) || null args then return [] else do
+    let VAddr addr = head args
+    VObj _ flds <- getHeapVal addr
+    return $ zip (map (Loc LObj) [1..]) flds
+
 
 createStackFrame :: Label -> [V] -> QInter QStack
 createStackFrame name args = do
+  name' <- polymorphise name args
   locals <- getLocalCounts
+  fields <- fieldsFromMethName name args
+  deb $ intercalate "\n" $
+    zipWith (++) (map (++ ": ") [" - name", " - name'", " - local count"])
+    [show name, show name', show (locals ! name')]
   return $ Map.fromList $
        zip (map (Loc LArg)   [1..]) args
-    ++ zip (map (Loc LLocal) [1..]) (map VInt [1..locals ! name])
-
+    ++ zip (map (Loc LLocal) [1..]) (map VInt [1..locals ! name'])
+    ++ fields
 deb :: String -> QInter ()
 deb = liftIO . putErrLn
 
@@ -157,6 +201,13 @@ doUnOp _ _ = error "doUnOp: can never happen"
 
 assign :: Val -> V -> QInter ()
 assign (VReg i) v = modifyReg i v
+assign (VLoc l@(Loc LObj i)) v = do
+  VAddr addr <- eVal (VLoc (Loc LArg 1))
+  VObj clsName fields <- getHeapVal addr
+  let newFields = replaceIth v i fields
+      newObj = VObj clsName newFields
+  modifyHeapVal addr newObj
+  modifyStack l v
 assign (VLoc l) v = modifyStack l v
 assign (VMember val label) v = do
   VAddr addr <- eVal val
@@ -169,7 +220,7 @@ assign _ _ = error "assign: can never happen"
 
 replaceIth :: a -> Integer -> [a] -> [a]
 replaceIth v i l =
-  let i' = fromInteger i
+  let i' = fromInteger $ i - 1 -- +1 to switch between indexing from 0 and 1
   in take i' l ++ v : drop (i' + 1) l
 
 evalInstr :: Quad -> Integer -> QInter Integer
@@ -196,33 +247,15 @@ evalInstr (QCall vres name args) i = do
   res <- call name vs
   assign vres res
   return $ i + 1
-evalInstr (QMemberAss obj fld val) i =
-  eVal val >>= assign (VMember obj fld) >> return (i + 1)
-{-evalInstr (QMemberAccess vres obj fld) i =
-  eVal (VMember obj fld) >>= assign vres >> return (i + 1)-}
-evalInstr (QMethCall vres obj mth args) i = do
-  vs <- mapM eVal args
-  VAddr addr <- eVal obj
-  v@(VObj clsName _) <- getHeapVal addr
-  let mangled = mangler clsName mth
-  res <- call mangled (v:vs)
-  assign vres res
-  return $ i + 1
 evalInstr (QNew vres clsName) i = do
   heap <- getHeap
   flds <- getAllFields clsName
   let n = 1 + fromMaybe 0 (fst <$> Map.lookupMax heap)
-      vs = map defaultInit flds
+      vs = map (defaultInit . snd) flds
   modifyHeapVal n $ VObj clsName vs
   assign vres (VAddr n)
   return $ i + 1
 
-getAllFields :: Ident -> QInter [Type]
-getAllFields name = if name == noBaseClass then return [] else do
-  cls@(Class _ base mems) <- getClass name
-  let flds = map (mems!) (getFields cls)
-  rest <- getAllFields base
-  return $ flds ++ rest
 
 defaultInit :: Type -> V
 defaultInit Latte.Int = VInt 0
@@ -240,7 +273,7 @@ eVal (VLoc l) = getStackVal l
 eVal (VImm i) = return $ VInt i
 eVal VNullptr = return $ VAddr 0
 eVal (VMember v memName) =
-  uncurry (!!) . (second fromInteger) <$> extractFieldOffset v memName
+  uncurry (!!) . (second $ (subtract 1) . fromInteger) <$> extractFieldOffset v memName
 
 extractFieldOffset :: Val -> Label -> QInter ([V], Integer)
 extractFieldOffset v memName = do
@@ -249,11 +282,3 @@ extractFieldOffset v memName = do
   i <- getFieldOffset clsName memName
   return (fields, i)
 
-getFieldOffset :: Ident -> Ident -> QInter Integer
-getFieldOffset clsName fldName = do
-  cls <- getClass clsName -- assumes this is never called with clsName == Ident ""
-  let mi = fldName `elemIndex` getFields cls
-  maybe
-    (getFieldOffset (classBase cls) fldName)
-    (return . toInteger)
-    mi

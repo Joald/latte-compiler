@@ -1,4 +1,5 @@
 {-# LANGUAGE RecordWildCards, NamedFieldPuns, FlexibleContexts #-}
+{-# LANGUAGE TypeSynonymInstances, FlexibleInstances #-}
 module CodeGen.Utils where
 
 import Control.Monad.Reader
@@ -6,6 +7,7 @@ import Control.Monad.State
 
 import Data.Map ((!))
 import Data.List
+import Data.Maybe
 import qualified Data.Map as Map
 import Data.Map (Map)
 
@@ -14,6 +16,11 @@ import BNFC.AbsLatte hiding (Int, Bool, Void)
 import Utils
 import Types.Abs
 import CodeGen.Abs
+
+
+instance ClassMappable CodeGen where
+  getClassMap = asks fst3
+
 
 getClassSize :: Ident -> CodeGen Integer
 getClassSize name = do
@@ -31,43 +38,18 @@ getClassSize name = do
 enterClass :: Ident -> CodeGen a -> CodeGen a
 enterClass name = local (second3 (const name))
 
-getClass :: Ident -> CodeGen Class
-getClass name = liftM (! name) getClassMap
-
-getClassMap :: CodeGen ClassMap
-getClassMap = asks fst3
-
 getCurrentClass :: CodeGen Ident
 getCurrentClass = asks snd3
 
 getLocMap :: CodeGen LocMap
 getLocMap = asks thd3
 
-getFieldOffset :: Ident -> Ident -> CodeGen Integer
-getFieldOffset clsName fldName = do
-  cls <- getClass clsName -- assumes this is never called with clsName == Ident ""
-  let mi = fldName `elemIndex` getFields cls
-  maybe
-    (getFieldOffset (classBase cls) fldName)
-    (return . toInteger)
-    mi
-
-getFields :: Class -> [Ident]
-getFields = map fst . filter (isField . snd) . Map.toList . classMembers
-
-isField :: Type -> Bool
-isField (Fun _ _) = False
-isField _ = True
+getFieldOffset :: ClassMappable m => Ident -> Ident -> m Integer
+getFieldOffset clsName fldName =
+  toInteger . fromJust . elemIndex fldName . map fst <$> getAllFields clsName
 
 getIdentDeclsDeep :: Stmt -> [Ident]
 getIdentDeclsDeep = mapStmt getIdentDecls
-
-mangler :: Ident -> Ident -> Ident
-mangler (Ident id1) = mapIdent _mangler
-  where _mangler id2 = id1 ++ '_' : id2
-
-mapIdent :: (String -> String) -> Ident -> Ident
-mapIdent f (Ident x) = Ident (f x)
 
 type Mangler = ReaderT (Map Ident Ident) (State Integer)
 
@@ -101,7 +83,6 @@ changeIdent (Ident i) = do
 replaceIdent :: Stmt -> Mangler Stmt
 replaceIdent s =
   case s of
-    Decl t items -> error "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAa"--Decl t <$> mapM replaceItem items
     Ass id e -> Ass <$> mreplace id <*> replaceExpr e
     MemAss id1 id2 e -> MemAss <$> mreplace id1 <*> pure id2 <*> replaceExpr e
     Incr id -> Incr <$> mreplace id

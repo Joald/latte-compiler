@@ -203,7 +203,7 @@ hasType id t = do
 isBaseOf :: Type -> Type -> TypeM Bool
 tSub `isBaseOf` tBase =
   if tSub == tBase then return True else do
-    base <- classBase <$> getClass tSub
+    base <- classBase <$> getClassType tSub
     if base == noBaseClass
       then return False
       else Struct base `isBaseOf` tBase
@@ -216,9 +216,9 @@ t1@(Struct _) `mustBeType` t2@(Struct _) =
   ifM ((||) <$> t1 `isBaseOf` t2 <*> t2 `isBaseOf` t1) (return t1) (typeMismatch t1 t2)
 t1 `mustBeType` t2 = unless (t1 == t2) (typeMismatch t1 t2) >> return t1
 
-getClass :: Type -> TypeM Class
-getClass (Struct id) = getClassId id
-getClass t = mustBeClass t >> return dummyClass
+getClassType :: Type -> TypeM Class
+getClassType (Struct id) = getClassId id
+getClassType t = mustBeClass t >> return dummyClass
 
 getClassId :: Ident -> TypeM Class
 getClassId id = do
@@ -248,14 +248,11 @@ validateItem t (Init id expr) = do
 checkVoidness :: Type -> Ident -> TypeM ()
 checkVoidness t id = when (t == Latte.Void) $ voidVariable id
 
-getClassMap :: TypeM ClassMap
-getClassMap = asks thd3
-
 existsClass :: Ident -> TypeM Bool
 existsClass id = Map.member id <$> getClassMap
 
 getClassMembers :: Ident -> TypeM TypeMap
-getClassMembers objid = classMembers <$> (getType objid >>= getClass)
+getClassMembers objid = classMembers <$> (getType objid >>= getClassType)
 
 checkExpr :: Expr -> Type -> TypeM Type
 checkExpr _e _t = enter ("expression " ++ printTree _e) (_checkExpr _e _t)
@@ -325,7 +322,7 @@ checkCall exprs types = do
 
 checkMembership :: Ident -> Ident -> TypeM Type
 checkMembership objid memid = do
-  Class name _ _ <- getType objid >>= getClass
+  Class name _ _ <- getType objid >>= getClassType
   _checkMembership name
   where
     _checkMembership clid = do

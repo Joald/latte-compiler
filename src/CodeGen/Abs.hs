@@ -21,8 +21,6 @@ data Quad
   | QCall Val Label [Val]
   | QRet Val
   | QVRet
-  | QMemberAss Val Label Val -- object . field = value
-  | QMethCall Val Val Label [Val] -- rv, obj, fname, args
   | QNew Val Ident -- val = new Name
   deriving (Show, Eq, Ord, Read)
 
@@ -38,14 +36,10 @@ showQuad q = "  " ++ case q of
     "if " ++ showVal v1 ++ " " ++ showRelOp op ++ " " ++ showVal v2
           ++ " goto " ++ name
   QCall v (Ident l) vs ->
-    "call " ++ showVal v ++ " = " ++ l ++
+    showVal v ++ " = call " ++ l ++
     "(" ++ intercalate ", " (map showVal vs) ++ ")"
   QRet v -> "ret " ++ showVal v
   QVRet -> "ret"
-  QMemberAss vo (Ident fld) v -> showVal vo ++ " . " ++ fld ++ " = " ++ showVal v
-  QMethCall vret vobj (Ident methName) vs ->
-    showVal vret ++ " = " ++ showVal vobj ++ " . " ++ methName
-              ++ "(" ++ intercalate ", " (map showVal vs) ++ ")"
   QNew v (Ident clsName) -> showVal v ++ " = new " ++ clsName
   _ -> error "showQuad: can never happen"
 
@@ -86,8 +80,8 @@ data Loc = Loc Region Integer
 showLoc :: Loc -> String
 showLoc (Loc LArg i) = "args[" ++ show i ++ "]"
 showLoc (Loc LLocal i) = "local[" ++ show i ++ "]"
-
-data Region = LArg | LLocal
+showLoc (Loc LObj i) = "self[" ++ show i ++ "]"
+data Region = LArg | LLocal | LObj
   deriving (Show, Eq, Ord, Read)
 data Op = OAdd AddOp | OMul MulOp | OAnd | OOr | ORel RelOp
   deriving (Show, Eq, Ord, Read)
@@ -110,6 +104,7 @@ showRelOp op =
     GE -> ">="
     EQU -> "=="
     NE -> "!="
+
 data Asm
   = Aret
   | Afn Int [Asm] -- Int is the required stack space
@@ -129,3 +124,4 @@ type Env = (ClassMap, Ident, LocMap)
 type St = Integer
 
 type CodeGen = WriterT [Quad] (ReaderT Env (State St))
+

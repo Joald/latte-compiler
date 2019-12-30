@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeSynonymInstances, FlexibleInstances #-}
 module Types.Utils where
 
 import qualified Data.Map as Map
@@ -48,3 +49,6 @@ pairMapUnion (m1, m2) (m1', m2') = (m1 `Map.union` m1', m2 `Map.union` m2')
 isFunction :: Type -> Bool
 isFunction (Fun _ _) = True
 isFunction _ = False
+
+instance ClassMappable TypeM where
+  getClassMap = asks thd3

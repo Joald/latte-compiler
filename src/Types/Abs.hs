@@ -1,22 +1,20 @@
 {-# LANGUAGE
   FlexibleInstances
 , MultiParamTypeClasses
-, UndecidableInstances
 , ConstraintKinds
 , FlexibleContexts #-}
+
 module Types.Abs where
 
 import Prelude hiding (id)
 
 import Data.List
 import Data.Map (Map)
-import qualified Data.Map as Map
 import Control.Monad.Reader
 import Control.Monad.Except
 import Control.Monad.State
 
 import BNFC.AbsLatte hiding (Int, Void, Bool)
-import qualified BNFC.AbsLatte as Latte
 import BNFC.PrintLatte
 
 
@@ -36,6 +34,9 @@ type TypeM =
     (State TypeMap))
 
 type RT = (Type, [String], ClassMap)
+
+class Monad m => ClassMappable m where
+  getClassMap :: m ClassMap
 
 
 data TypeError
