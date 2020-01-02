@@ -162,6 +162,9 @@ enter = tell [Aenter]
 push :: Param -> QTA ()
 push param = tell [AUn PUSH param]
 
+pop :: Param -> QTA ()
+pop param = tell [AUn POP param]
+
 addEsp :: Integer -> QTA ()
 addEsp i = tell [ABin ADD (PReg ESP) (PImm i)]
 
@@ -169,7 +172,7 @@ subEsp :: Integer -> QTA ()
 subEsp i = tell [ABin SUB (PReg ESP) (PImm i)]
 
 argAddr :: Integer -> Param
-argAddr i = PAddr EBP Nothing Nothing (Just $ -4 * i)
+argAddr i = PAddr EBP Nothing Nothing (Just $ 4 + 4 * i)
 
 addrExact :: Reg -> Param
 addrExact reg = PAddr reg Nothing Nothing Nothing
@@ -181,7 +184,7 @@ addrIndex :: Reg -> Reg -> Param
 addrIndex reg index = PAddr reg (Just 4) (Just index) Nothing
 
 localAddr :: Integer -> Param
-localAddr = addrOffset EBP
+localAddr = addrOffset EBP . negate
 
 assignLocal :: Integer -> Param -> QTA ()
 assignLocal li p = mov (localAddr li) p
@@ -194,6 +197,9 @@ call l = tell [AUn CALL (PLabel l)]
 
 eax :: Param
 eax = PReg EAX
+
+ebx :: Param
+ebx = PReg EBX
 
 ecx :: Param
 ecx = PReg ECX
@@ -214,10 +220,10 @@ xor :: Param -> Param -> QTA ()
 xor p1 p2 = tell [ABin XOR p1 p2]
 
 createCtor :: Class -> QTA ()
-createCtor cls@(Class name _ _) = do
+createCtor (Class name _ _) = do
   label $ ctor name
-  let flds = getFields cls
-      classSize = toInteger $ length flds + 1 -- every class gets a virtual table
+  flds <- map fst <$> getAllFields name
+  let classSize = toInteger $ length flds + 1 -- every class gets a virtual table
   enter
   subEsp 16
   push $ PImm 4
@@ -282,14 +288,12 @@ regsUsed = nub . concatMap (mapQuad go)
 valToParam :: Val -> QTA Param
 valToParam (VLoc (Loc LObj i)) = do
   mov ecx (argAddr 1)
-  mov ecx (addrOffset ECX i)
-  return ecx
+  return (addrOffset ECX i)
 valToParam (VMember v cls l) = do
   p <- valToParam v
   mov ecx p
   i <- getFieldOffset cls l
-  mov ecx (addrOffset ECX i)
-  return ecx
+  return (addrOffset ECX i)
 valToParam v = gets fst <*> pure v
 
 binAsm :: BinAsm -> Param -> Param -> QTA ()
@@ -312,8 +316,12 @@ doOp op pr =
     OAdd addOp -> do
       binAsm (opToBinAsm addOp) eax pr
       return eax
-    OMul mulOp -> do
-      unAsm (mulOpToUnAsm mulOp) pr
+    OMul mulOp -> do -- using ebx because ecx might be used by valToParam
+      push ebx
+      mov ebx pr
+      custom "  cdq"
+      unAsm (mulOpToUnAsm mulOp) ebx
+      pop ebx
       return if mulOp == Mod then edx else eax
     OAnd -> do
       binAsm AND eax pr
@@ -408,4 +416,4 @@ callVirtual v i = do
   mov eax p
   mov eax (addrExact EAX)
   mov eax (addrOffset EAX i)
-  unAsm CALL (addrExact EAX)
+  unAsm CALL eax

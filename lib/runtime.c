@@ -20,12 +20,14 @@ void error() {
 
 int readInt() {
   int x;
-  scanf("%d", &x);
+  scanf("%d\n", &x);
   return x;
 }
 
 char* readString() {
   char* buf = NULL;
-  getline(&buf, NULL, stdin);
+  int i;
+  getline(&buf, &i, stdin);
   return buf;
 }
+

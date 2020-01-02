@@ -135,7 +135,7 @@ data Asm
 data BinAsm = MOV | ADD | SUB | CMP | XOR | AND | OR
   deriving (Show, Eq, Ord, Read)
 data UnAsm =
-  IMUL | IDIV | JMP | CALL | JE | JNE | JG | JGE | JL | JLE | NEG | PUSH
+  IMUL | IDIV | JMP | CALL | JE | JNE | JG | JGE | JL | JLE | NEG | PUSH | POP
   deriving (Show, Eq, Ord, Read)
 data Param
   = PReg Reg
@@ -147,7 +147,7 @@ data Section = SText | SData | SRodata | SBss
   deriving (Show, Eq, Ord, Read)
 
 
-data Reg = EAX | ECX | EDX | EBP | ESP
+data Reg = EAX | EBX | ECX | EDX | EBP | ESP
   deriving (Show, Eq, Ord, Read)
 
 type AsmMap = Map Val Param

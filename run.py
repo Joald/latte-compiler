@@ -23,7 +23,7 @@ else:
     if dirr.endswith("good"):
         running = True
 if len(argv) < 3:
-    cmd = ["stack", "run"]
+    cmd = ["./runfile.sh"]
 else:
     cmd = argv[2].split(" ")
 
@@ -42,12 +42,16 @@ def runFile(f):
     
     system("cat " + f)
     print("\n" + magenta + "FILE END")
-    pat = f[:-3] + "input"
-    inFile = open(pat, 'r') if running and path.exists(pat) else None 
+    pat = f[:-4] 
+    inpat = pat + ".input"
+    inFile = open(inpat, 'r') if running and path.exists(inpat) else None 
 
     res = subprocess.run(cmd + [f], stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=inFile)
     if res.returncode == 0:
         print(green)
+        system("rm " + pat)
+        system("rm " + pat + ".s")
+
         passed += 0 if running else 1
     else:
         autoplaying = False
@@ -59,7 +63,7 @@ def runFile(f):
     print(out)
     print(res.stderr.decode("utf-8"))
     if running:
-        outFile = open(f[:-3] + "output", 'r').read()
+        outFile = open(pat + ".output", 'r').read()
         if outFile == out:
             print(green + "OUTPUT OK")
             passed += 1

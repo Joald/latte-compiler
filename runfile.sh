@@ -1,4 +1,8 @@
-stack run examples/good/$1.lat > $1.s
-nasm -f elf32 $1.s
-gcc -o $1 -m32 $1.o lib/runtime.o
-./$1
+#!/bin/bash
+set -e
+base=${1%.lat}
+stack run $1 > $base.s
+nasm -f elf32 $base.s
+gcc -o $base -m32 $base.o lib/runtime.o
+rm $base.o
+./$base
