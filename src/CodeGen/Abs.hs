@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeSynonymInstances, FlexibleInstances #-}
 module CodeGen.Abs where
 
 import Control.Monad.Reader
@@ -11,6 +12,7 @@ import Types.Abs
 
 import BNFC.AbsLatte
 
+
 data Quad
   = QBin Val Val Op Val
   | QUn Val UnOp Val
@@ -18,10 +20,11 @@ data Quad
   | QGoto Label
   | QLabel Label
   | QCond Val RelOp Val Label
-  | QCall Val Label [Val]
+  | QCall Val Label (Maybe Integer) [Val]
   | QRet Val
   | QVRet
   | QNew Val Ident -- val = new Name
+  | QFun Label [Quad]
   deriving (Show, Eq, Ord, Read)
 
 showQuad :: Quad -> String
@@ -35,14 +38,15 @@ showQuad q = "  " ++ case q of
   QCond v1 op v2 (Ident name) ->
     "if " ++ showVal v1 ++ " " ++ showRelOp op ++ " " ++ showVal v2
           ++ " goto " ++ name
-  QCall v (Ident l) vs ->
+  QCall v (Ident l) _ vs ->
     showVal v ++ " = call " ++ l ++
     "(" ++ intercalate ", " (map showVal vs) ++ ")"
   QRet v -> "ret " ++ showVal v
   QVRet -> "ret"
   QNew v (Ident clsName) -> showVal v ++ " = new " ++ clsName
+  QFun (Ident name) qs -> "FUNCTION " ++ name ++ ":\n" ++ unlines (map showQuad qs)
   _ -> error "showQuad: can never happen"
-
+  
 
 infix 2 $=
 ($=) :: Val -> Val -> Quad
@@ -63,7 +67,7 @@ data Val
   | VLoc Loc
   | VImm Integer
   | VNullptr
-  | VMember Val Label
+  | VMember Val Label Label
   deriving (Show, Eq, Ord, Read)
 
 showVal :: Val -> String
@@ -72,7 +76,7 @@ showVal (VStr s) = show s
 showVal (VLoc l) = showLoc l
 showVal (VImm i) = "$" ++ show i
 showVal VNullptr = "nullptr"
-showVal (VMember v (Ident l)) = show v ++ "." ++ l
+showVal (VMember v (Ident cls) (Ident l)) = cls ++ "{" ++ show v ++ "}." ++ l
 
 data Loc = Loc Region Integer
   deriving (Show, Eq, Ord, Read)
@@ -104,24 +108,55 @@ showRelOp op =
     GE -> ">="
     EQU -> "=="
     NE -> "!="
-
-data Asm
-  = Aret
-  | Afn Int [Asm] -- Int is the required stack space
-  deriving Show
-
-data AsmReg = EAX | ECX | EDX | EBP
-  deriving (Show, Eq, Ord, Read)
-
-showAsm :: Asm -> String
-showAsm = show
-
-
-
+type IdentMap = Map Ident Ident
 type LocMap = Map Ident Loc
 
-type Env = (ClassMap, Ident, LocMap)
+type Env = (ClassMap, Ident, LocMap, IdentMap)
 type St = Integer
 
 type CodeGen = WriterT [Quad] (ReaderT Env (State St))
+
+type LocalCounts = Map Label Integer
+
+
+data Asm
+  = ASection Section [Asm]
+  | ALabel Label
+  | Aequ Label [Label]
+  | Aret
+  | Aenter
+  | Aleave
+  | ABin BinAsm Param Param
+  | AUn UnAsm Param
+  | AConstStr String String
+  | ACustom String
+  deriving (Show, Eq, Ord, Read)
+
+data BinAsm = MOV | ADD | SUB | CMP | XOR | AND | OR
+  deriving (Show, Eq, Ord, Read)
+data UnAsm =
+  IMUL | IDIV | JMP | CALL | JE | JNE | JG | JGE | JL | JLE | NEG | PUSH
+  deriving (Show, Eq, Ord, Read)
+data Param
+  = PReg Reg
+  | PImm Integer
+  | PAddr Reg (Maybe Integer) (Maybe Reg) (Maybe Integer) -- [base + scale * index + displacement]
+  | PLabel Label
+  deriving (Show, Eq, Ord, Read)
+data Section = SText | SData | SRodata | SBss
+  deriving (Show, Eq, Ord, Read)
+
+
+data Reg = EAX | ECX | EDX | EBP | ESP
+  deriving (Show, Eq, Ord, Read)
+
+type AsmMap = Map Val Param
+
+type QTAEnv = (ClassMap, LocalCounts)
+type QTASt = (Val -> Param, Integer)
+
+type QTA = WriterT [Asm] (ReaderT QTAEnv (State QTASt))
+
+instance ClassMappable QTA where
+  getClassMap = asks fst
 

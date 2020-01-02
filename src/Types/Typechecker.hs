@@ -171,7 +171,7 @@ checkStmt s = enter ("statement " ++ printTree s) (_checkStmt s)
   where
     _checkStmt (BStmt (Block stmts)) = enter "block" $ do
       let dups = duplicates $ concatMap getIdentDecls stmts
-      unless (null dups) $ redeclaration $ head dups
+      unless (null dups) $ redeclaration $ fst $ head dups
       checkBlock stmts
     _checkStmt (Decl t items) = mapM_ (validateItem t) items
     _checkStmt (Ass id expr) = do

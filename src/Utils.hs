@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleContexts, TupleSections #-}
 module Utils where
 
 import Prelude hiding (id)
@@ -6,11 +6,15 @@ import System.IO
 import Foreign.Marshal.Utils (fromBool)
 import Control.Monad.Reader
 import Control.Monad.State
+import Control.Monad.Writer
 
 import Data.Maybe
+import Data.List
 import Data.Bits
+import Data.Tuple
 import Data.Map (Map, (!))
 import qualified Data.Map as Map
+import qualified Data.Char as Char
 
 import CodeGen.Abs
 import BNFC.AbsLatte hiding (Int, Bool, Void)
@@ -38,8 +42,15 @@ second3 f ~(a, b, c) = (a, f b, c)
 third :: (c -> d) -> (a, b, c) -> (a, b, d)
 third f ~(a, b, c) = (a, b, f c)
 
-fourth4 :: (d -> f) -> (a, b, c, d) -> (a, b, c, f)
-fourth4 f ~(a, b, c, d) = (a, b, c, f d)
+second4 :: (b -> f) -> (a, b, c, d) -> (a, f, c, d)
+second4 f ~(a, b, c, d) = (a, f b, c, d)
+
+third4 :: (c -> f) -> (a, b, c, d) -> (a, b, f, d)
+third4 f ~(a, b, c, d) = (a, b, f c, d)
+
+
+fourth :: (d -> f) -> (a, b, c, d) -> (a, b, c, f)
+fourth f ~(a, b, c, d) = (a, b, c, f d)
 
 fourth5 :: (d -> f) -> (a, b, c, d, e) -> (a, b, c, f, e)
 fourth5 f ~(a, b, c, d, e) = (a, b, c, f d, e)
@@ -101,8 +112,8 @@ funDefType (FnDef ty _ args _) = Fun ty $ map (\(Arg t _) -> t) args
 unIdent :: Ident -> String
 unIdent (Ident id) = id
 
-getIdentDecls :: Stmt -> [Ident]
-getIdentDecls (Decl _ items) = map itemName items
+getIdentDecls :: Stmt -> [(Ident, Type)]
+getIdentDecls (Decl t items) = zip (map itemName items) (repeat t)
 getIdentDecls  _ = []
 
 getMember :: MemberDecl -> (Ident, Type)
@@ -255,15 +266,40 @@ getAllFields name = if name == noBaseClass then return [] else do
   rest <- getAllFields base
   return $ rest ++ flds
 
-getAllMethods :: ClassMappable m => Ident -> m [(Ident, Ident)] -- pair of mangled, unmangled name
+-- pair of mangled, unmangled name
+getAllMethods :: ClassMappable m => Ident -> m [(Ident, Ident)]
 getAllMethods name = if name == noBaseClass then return [] else do
   cls@(Class _ base _) <- getClass name
   let methNames = getMethods cls
       mangledNames = map (mangler name) methNames
   rest <- getAllMethods base
-  let rest' = filter (not . (`elem` methNames)) $ map snd rest
-      rest'' = zip (map (mangler name) rest') rest'
-  return $ rest'' ++ zip mangledNames methNames
+  let current = zip methNames mangledNames
+      rest' = replacer (flipZip rest) current
+  return $ flipZip rest'
+  where
+    replacer :: [(Ident, Ident)] -> [(Ident, Ident)] -> [(Ident, Ident)]
+    replacer [] c = c
+    replacer (f@(x, _):xs) c =
+      maybe (f:replacer xs c)
+        ((:replacer xs (delFromAL x c)) . (x,))
+        (lookup x c)
+
+getMemberType :: ClassMappable m => Ident -> Ident -> m Type
+getMemberType clsName memName = if clsName == noClass then error $ "nomem" ++ unIdent memName else do
+  (Class _ base mems) <- getClass clsName
+  let m = Map.lookup memName mems
+  maybe (getMemberType base memName) return m
+
+
+getMethodIndex :: ClassMappable m => Ident -> Ident -> m Integer
+getMethodIndex methName clsName = do
+  meths <- getAllMethods clsName
+  let unmangleds = map snd meths
+      mi = methName `elemIndex` unmangleds
+  return $ toInteger $ fromJust  mi
+
+noClass :: Ident
+noClass = Ident ""
 
 isAMethod :: ClassMappable m => Ident -> Ident -> m Bool
 isAMethod methName clsName = (methName `elem`) . map fst <$> getAllMethods clsName
@@ -278,17 +314,60 @@ isField :: Type -> Bool
 isField (Fun _ _) = False
 isField _ = True
 
+decapitalize :: String -> String
+decapitalize [] = []
+decapitalize (x:xs) = Char.toLower x : xs
+
+decapFull :: String -> String
+decapFull = map Char.toLower
 
 methodMarker :: String
 methodMarker = "__method__ "
 
 markMethod :: Ident -> Ident
-markMethod = mapIdent (methodMarker ++)
+markMethod = mapIdent $ (methodMarker ++)
+
+markerLength :: Int
+markerLength = length methodMarker
+
+isMarked :: Ident -> Bool
+isMarked name = take markerLength (unIdent name) == methodMarker
+
+unMark :: Ident -> Ident
+unMark name = if isMarked name then mapIdent (drop markerLength) name else name
 
 mangler :: Ident -> Ident -> Ident
-mangler id1 = mapIdent _mangler
-  where _mangler id2 = unIdent id1 ++ '_' : id2
+mangler id1 id2 = Ident $ unIdent id1 ++ "___" ++ unIdent id2
 
 mapIdent :: (String -> String) -> Ident -> Ident
 mapIdent f (Ident x) = Ident (f x)
 
+maybeShow :: Show a => Maybe a -> String
+maybeShow = maybe "" show
+
+isClass :: Type -> Bool
+isClass (Struct _) = True
+isClass _ = False
+
+argToType :: Arg -> (Ident, Type)
+argToType (Arg t name) = (name, t)
+
+flipZip :: [(a, b)] -> [(b, a)]
+flipZip = map swap
+
+findString :: (Eq a) => [a] -> [a] -> Maybe Int
+findString search str = findIndex (isPrefixOf search) (tails str)
+
+-- AL functions adapted from
+-- https://hackage.haskell.org/package/MissingH-1.4.2.1/docs/Data-List-Utils.html
+
+delFromAL :: Eq key => key -> [(key, a)] -> [(key, a)]
+delFromAL key l = filter (\a -> (fst a) /= key) l
+
+hasKeyAL :: Eq a => a -> [(a, b)] -> Bool
+hasKeyAL key list =
+    elem key (map fst list)
+
+
+listen' :: MonadWriter w m => m a -> m (a, w)
+listen' = censor (const mempty) . listen

@@ -1,3 +1,4 @@
+{-# LANGUAGE BlockArguments #-}
 module CodeGen.CodeGen where
 
 import Control.Monad.Reader
@@ -16,13 +17,14 @@ import CodeGen.Abs
 import CodeGen.Utils
 import CodeGen.QInter
 
-import Debug.Trace
-import BNFC.PrintLatte
+import CodeGen.Asm
 
 
 codeGen :: ClassMap -> Program -> String
 codeGen cls prog =
-  concatMap showAsm $ quadToAsm $ execCodeGen (compileProgram prog) cls
+  unlines . map showAsm
+  $ uncurry (quadToAsm cls)
+  $ runCodeGen (Map.fromList <$> compileProgram prog) cls
 
 interpQuad :: ClassMap -> Program -> IO ()
 interpQuad cls prog =
@@ -30,14 +32,13 @@ interpQuad cls prog =
       localCountMap = Map.fromList localCounts
   in qInter cls localCountMap quads
 
-quadToAsm :: [Quad] -> [Asm]
-quadToAsm = undefined
 
 execCodeGen :: CodeGen a -> ClassMap -> [Quad]
 execCodeGen cg = snd . runCodeGen cg
 
 runCodeGen :: CodeGen a -> ClassMap -> (a, [Quad])
-runCodeGen cg m = evalState (runReaderT (runWriterT cg) (m, noBaseClass, Map.empty)) 0
+runCodeGen cg m =
+  evalState (runReaderT (runWriterT cg) (m, noBaseClass, Map.empty, Map.empty)) 0
 
 type LocalCount = (Label, Integer)
 
@@ -55,28 +56,37 @@ compileMember (MethDecl fndef) = compileFunction fndef
 isInClass :: CodeGen Bool
 isInClass = liftM (/= noBaseClass) getCurrentClass
 
+variablesToClasses :: [(Ident, Type)] -> [(Ident, Ident)]
+variablesToClasses =
+  map (second $ \(Struct name) -> name)
+  . filter (isClass . snd)
+
 compileFunction :: FnDef -> CodeGen [LocalCount]
 compileFunction (FnDef t name args (Block stmts)) = do
   isMethod <- isInClass
-  clsName <- asks snd3
+  clsName <- asks snd4
   fields <- getAllFields clsName
   let argNames = map getArgName args
       argNames' = if isMethod then Ident "self" : argNames else argNames
       args' = zip argNames' $ map (Loc LArg) [1..]
-      stmts' = runLocalMangler stmts 
-      localNames = concatMap getIdentDeclsDeep stmts'
+      stmts' = runLocalMangler stmts
+      localDecls = concatMap getIdentDeclsDeep stmts'
+      localNames = map fst localDecls
       locals = zip localNames $ map (Loc LLocal) [1..]
       fieldNames = map fst fields
       fields' = zip fieldNames $ map (Loc LObj) [1..]
       env = Map.fromList $ args' ++ locals ++ fields'
+      objClasses = Map.fromList $
+                     variablesToClasses localDecls
+                     ++ variablesToClasses fields
+                     ++ variablesToClasses (map argToType args)
+                     ++ if isMethod then [(Ident "self", clsName)] else []
   mangled <- mangle name
-  label mangled
-  local (third $ const env) $ compileStmts stmts'
-  when (t == Latte.Void) ret
+  local (third4 (const env) . fourth (const objClasses)) $ censor ((:[]) . QFun mangled) $ do
+    compileStmts stmts'
+    when (t == Latte.Void) ret
   return [(mangled, toInteger $ length localNames)]
 
-noClass :: Ident
-noClass = Ident ""
 
 mangle :: Ident -> CodeGen Ident
 mangle name = do
@@ -99,7 +109,8 @@ compileStmt (Ass name expr) = do
 compileStmt (MemAss objName memName expr) = do
   val <- compileExpr expr
   objVal <- getVal objName
-  tell [QCopy (VMember objVal memName) val]
+  clsName <- getClassOfVar objName
+  tell [QCopy (VMember objVal clsName memName) val]
 compileStmt (Incr name) = do
   v <- getVal name
   tell [QBin v v (OAdd Plus) (VImm 1)]
@@ -182,24 +193,34 @@ compileExpr (ENew name) = do
 compileExpr (EApp fname args) = do
   vs <- mapM compileExpr args
   isMethod <- isInClass
-  isMethod' <- if isMethod then getCurrentClass >>= isAMethod fname else return isMethod
+  isMethod' <-
+    if isMethod
+      then getCurrentClass >>= isAMethod fname
+      else return isMethod
   let vs' = if isMethod' then VLoc (Loc LArg 1):vs else vs
+  mindex <-
+    if isMethod'
+      then fmap Just $ getCurrentClass >>= getMethodIndex fname
+      else return Nothing
   r <- freshReg
-  tell [QCall r fname vs']
+  tell [QCall r fname mindex vs']
   return r
 compileExpr (EString s) = return (VStr s)
 compileExpr (ECast _) = return VNullptr
-compileExpr (EAcc objName memName) = VMember <$> getVal objName <*> pure memName
+compileExpr (EAcc objName memName) =
+  VMember <$> getVal objName <*> getClassOfVar objName <*> pure memName
 compileExpr (EMeth objName methName args) = do
   v <- getVal objName
   vs <- mapM compileExpr args
   r <- freshReg
-  tell [QCall r (markMethod methName) (v:vs)]
+  name <- getClassOfVar objName
+  index <- getMethodIndex methName name
+  tell [QCall r (markMethod methName) (Just index) (v:vs)]
   return r
 compileExpr (Neg e) = compileUnOp ONeg e
 compileExpr (Not e) = compileUnOp ONot e
 compileExpr (EMul e1 op e2) = compileBinOp e1 (OMul op) e2
-compileExpr (EAdd e1 op e2) = compileBinOp e1 (OAdd op) e2
+compileExpr (EAdd e1 op e2) = compileBinOp e1 (OAdd op) e2 -- TODO: string concatenation
 compileExpr (ERel e1 op e2) = compileBinOp e1 (ORel op) e2
 compileExpr (EAnd e1 e2) = do
   v <- compileExpr e1

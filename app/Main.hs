@@ -11,7 +11,7 @@ import BNFC.AbsLatte
 import BNFC.ErrM
 
 import Types.Typechecker
-import CodeGen.CodeGen (interpQuad)
+import CodeGen.CodeGen (codeGen, interpQuad)
 import Utils
 type ParseFun a = [Token] -> Err a
 
@@ -20,15 +20,16 @@ runFile p f = readFile f >>= run p
 
 run :: ParseFun Program -> String -> IO ()
 run p s = let ts = myLexer s in case p ts of
-           Bad err  -> do
+           Bad err -> do
              putErrLn "ERROR"
              putErrLn "\nParse Failed...\n"
              putErrLn err
              exitFailure
-           Ok  tree -> case typeCheck tree of
+           Ok program -> case typeCheck program of
              Right clsMap -> do
                putErrLn "OK"
-               interpQuad clsMap tree
+               --interpQuad clsMap tree
+               putStrLn $ codeGen clsMap program
              Left err ->  do
                putErrLn $ "ERROR\n" ++ err
                exitFailure

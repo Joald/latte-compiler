@@ -19,7 +19,7 @@ import CodeGen.Abs
 
 
 instance ClassMappable CodeGen where
-  getClassMap = asks fst3
+  getClassMap = asks fst4
 
 
 getClassSize :: Ident -> CodeGen Integer
@@ -36,22 +36,25 @@ getClassSize name = do
       return (baseSize + curSize, baseBaseCount + 1)
 
 enterClass :: Ident -> CodeGen a -> CodeGen a
-enterClass name = local (second3 (const name))
+enterClass name = local (second4 (const name))
+
+getClassOfVar :: Ident -> CodeGen Ident
+getClassOfVar name = askMap name frh4
 
 getCurrentClass :: CodeGen Ident
-getCurrentClass = asks snd3
+getCurrentClass = asks snd4
 
 getLocMap :: CodeGen LocMap
-getLocMap = asks thd3
+getLocMap = asks thd4
 
 getFieldOffset :: ClassMappable m => Ident -> Ident -> m Integer
 getFieldOffset clsName fldName =
   toInteger . fromJust . elemIndex fldName . map fst <$> getAllFields clsName
 
-getIdentDeclsDeep :: Stmt -> [Ident]
+getIdentDeclsDeep :: Stmt -> [(Ident, Type)]
 getIdentDeclsDeep = mapStmt getIdentDecls
 
-type Mangler = ReaderT (Map Ident Ident) (State Integer)
+type Mangler = ReaderT IdentMap (State Integer)
 
 runLocalMangler :: [Stmt] -> [Stmt]
 runLocalMangler = runMangler . mangleLocals
@@ -119,3 +122,52 @@ replaceExpr e =
     EAnd e1 e2 -> EAnd <$> replaceExpr e1 <*> replaceExpr e2
     EOr e1 e2 -> EOr <$> replaceExpr e1 <*> replaceExpr e2
     _ -> return e
+
+showSection :: Section -> String
+showSection = decapitalize . tail . show
+
+showAsm :: Asm -> String
+showAsm (ACustom s) = s
+showAsm (ASection section asm) =
+  "section ." ++ showSection section ++ "\n" ++ intercalate "\n" (map showAsm asm)
+showAsm (ALabel (Ident name)) = name ++ ":"
+showAsm (ABin op p1 p2) = "  " ++ decapFull (show op) ++ " " ++ showParam p1 ++ ", " ++ showParam p2
+showAsm (AUn op p) = "  " ++ decapFull (show op) ++ " " ++ showParam p
+showAsm (AConstStr strName str) = "  " ++ strName ++ ": db " ++ show str ++ ", 0"
+showAsm (Aequ (Ident l) ls) = "  " ++ l ++ ": dd " ++ intercalate ", " (map unIdent ls)
+showAsm Aenter = "  push ebp\n  mov ebp, esp"
+showAsm x = "  " ++ tail (show x)
+
+showParam :: Param -> String
+showParam (PReg reg) = decapFull $ show reg
+showParam (PImm i) = show i
+showParam (PAddr base mscale mindex mdispl) =
+  let tscale = isJust mscale
+      tindex = isJust mindex
+      tdispl = isJust mdispl && fromJust mdispl >= 0
+      scale = maybeShow mscale
+      index = maybeShow mindex
+      displ = maybeShow mdispl
+      op1 = if tindex || tdispl then "+" else ""
+      op2 = if tscale then "*" else ""
+      op3 = if tindex && tdispl then "+" else ""
+  in "dword ["
+     ++ showReg base ++ op1 ++ scale ++ op2 ++ index ++ op3 ++ displ
+     ++ "]"
+showParam (PLabel (Ident name)) = name
+--showParam (PLabelAddr (Ident name)) = "[rel " ++ name ++ "]"
+showReg :: Reg -> String
+showReg = decapFull . show
+
+mapQuad :: (Val -> [a]) -> Quad -> [a]
+mapQuad go q =
+  case q of
+    QBin  v1 v2 _ v3 -> concatMap go [v1, v2, v3]
+    QUn   v1 _ v2    -> go v1 ++ go v2
+    QCopy v1 v2      -> go v1 ++ go v2
+    QCond v1 _ v2 _  -> go v1 ++ go v2
+    QCall v1 _ _ vs  -> go v1 ++ concatMap go vs
+    QRet  v          -> go v
+    QNew  v _        -> go v
+    QFun  _ qs       -> concatMap (mapQuad go) qs
+    _                -> []

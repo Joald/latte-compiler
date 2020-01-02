@@ -20,7 +20,6 @@ import Utils
 
 type QCode = Map Integer Quad
 type QLabels = Map Label Integer
-type QLocalCounts = Map Label Integer
 type QHeap = Map Integer V
 type QRegs = Map Integer V
 type QStack = Map Loc V
@@ -49,7 +48,7 @@ modifyReg k v = modifyRegs $ Map.insert k v
 getRegVal :: Integer -> QInter V
 getRegVal i = gets $ (! i) . snd3
 
-type QEnv = (QCode, QLabels, ClassMap, QLocalCounts)
+type QEnv = (QCode, QLabels, ClassMap, LocalCounts)
 
 getInstrAt :: Integer -> QInter Quad
 getInstrAt i = askMap i fst4
@@ -78,7 +77,7 @@ modifyStack l v = modify $ third $ Map.insert l v
 getStackVal :: Loc -> QInter V
 getStackVal l = getMap l thd3
 
-getLocalCounts :: QInter QLocalCounts
+getLocalCounts :: QInter LocalCounts
 getLocalCounts = asks frh4
 
 data V = VInt Integer | VString String | VObj Label [V] | VVoid | VAddr Integer
@@ -93,7 +92,7 @@ getLabel :: (Integer, Quad) -> [(Label, Integer)]
 getLabel (i, QLabel l) = [(l, i)]
 getLabel _ = []
 
-qInter :: ClassMap -> QLocalCounts -> [Quad] -> IO ()
+qInter :: ClassMap -> LocalCounts -> [Quad] -> IO ()
 qInter cls locals qs = do
   let qmap = Map.fromList $ zip [1..] qs
       qLabels = Map.fromList $ concatMap getLabel $ Map.toList qmap
@@ -125,14 +124,6 @@ call name args =
     deb $ "Calling fn " ++ unIdent name' ++ " with " ++ show args ++ " \n    and stack frame " ++ show sf
     newStackFrame sf $ run (p + 1)
 
-markerLength :: Int
-markerLength = length methodMarker
-
-isMarked :: Ident -> Bool
-isMarked name = take markerLength (unIdent name) == methodMarker
-
-unMark :: Ident -> Ident
-unMark = mapIdent $ drop markerLength
 
 polymorphise :: Ident -> [V] -> QInter Ident
 polymorphise name args =
@@ -209,7 +200,7 @@ assign (VLoc l@(Loc LObj i)) v = do
   modifyHeapVal addr newObj
   modifyStack l v
 assign (VLoc l) v = modifyStack l v
-assign (VMember val label) v = do
+assign (VMember val _ label) v = do
   VAddr addr <- eVal val
   VObj clsName fields <- getHeapVal addr
   (_, i) <- extractFieldOffset val label
@@ -242,7 +233,7 @@ evalInstr (QCond vl relop vr l) i = do
   p <- getLabelPos l
   VInt cond <- doBinOp <$> eVal vl <*> pure (ORel relop) <*> eVal vr
   return $ if testBit cond 0 then p else i + 1
-evalInstr (QCall vres name args) i = do
+evalInstr (QCall vres name _ args) i = do
   vs <- mapM eVal args
   res <- call name vs
   assign vres res
@@ -272,8 +263,8 @@ eVal (VStr str) = return $ VString str
 eVal (VLoc l) = getStackVal l
 eVal (VImm i) = return $ VInt i
 eVal VNullptr = return $ VAddr 0
-eVal (VMember v memName) =
-  uncurry (!!) . (second $ (subtract 1) . fromInteger) <$> extractFieldOffset v memName
+eVal (VMember v _ memName) =
+  uncurry (!!) . second (subtract 1 . fromInteger) <$> extractFieldOffset v memName
 
 extractFieldOffset :: Val -> Label -> QInter ([V], Integer)
 extractFieldOffset v memName = do

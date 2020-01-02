@@ -83,6 +83,8 @@ def runFile(f):
             autoplaying = True
             return
         if 'r' in a:
+            passed = 0
+            total = 0
             resetting = True
             return
 

@@ -1,5 +1,6 @@
 {-# LANGUAGE
   FlexibleInstances
+, UndecidableInstances
 , MultiParamTypeClasses
 , ConstraintKinds
 , FlexibleContexts #-}
@@ -38,6 +39,9 @@ type RT = (Type, [String], ClassMap)
 class Monad m => ClassMappable m where
   getClassMap :: m ClassMap
 
+
+instance Monad m => ClassMappable (ReaderT ClassMap m) where
+  getClassMap = ask
 
 data TypeError
   = TypeNotFound Ident
