@@ -219,12 +219,11 @@ createCtor cls@(Class name _ _) = do
   let flds = getFields cls
       classSize = toInteger $ length flds + 1 -- every class gets a virtual table
   enter
-  subEsp 8
+  subEsp 16
   push $ PImm 4
   push $ PImm classSize
-  subEsp 8
   call calloc
-  addEsp 16
+  addEsp 24
   let vt = vTable name
   mov (addrExact EAX) (PLabel vt)
   ts <- mapM (getMemberType name) flds
@@ -385,8 +384,8 @@ cq (QCall vres name mindex args) = do
   let padding = toInteger $ 16 - 4 * (length args `mod` 4)
   unless (padding `mod` 16 == 0) $ subEsp padding
   mapM_ pushArg $ reverse args
-  binAsm ADD (PReg ESP) (PImm padding)
   maybe (call name) (callVirtual (head args)) mindex
+  binAsm ADD (PReg ESP) (PImm $ toInteger (4 * length args) + padding)
   pres <- valToParam vres
   mov pres eax
 cq (QRet v) = do
