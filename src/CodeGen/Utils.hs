@@ -1,5 +1,5 @@
 {-# LANGUAGE RecordWildCards, NamedFieldPuns, FlexibleContexts #-}
-{-# LANGUAGE TypeSynonymInstances, FlexibleInstances #-}
+{-# LANGUAGE TypeSynonymInstances, FlexibleInstances, BlockArguments #-}
 module CodeGen.Utils where
 
 import Control.Monad.Reader
@@ -39,7 +39,7 @@ enterClass :: Ident -> CodeGen a -> CodeGen a
 enterClass name = local (second4 (const name))
 
 getClassOfVar :: Ident -> CodeGen Ident
-getClassOfVar name = askMap name frh4
+getClassOfVar name = (\(Struct name) -> name) <$> askMap name frh4
 
 getCurrentClass :: CodeGen Ident
 getCurrentClass = asks snd4

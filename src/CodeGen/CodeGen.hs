@@ -43,7 +43,13 @@ runCodeGen cg m =
 type LocalCount = (Label, Integer)
 
 compileProgram :: Program -> CodeGen [LocalCount]
-compileProgram (Program topDefs) = concatMapM compileTopDef topDefs
+compileProgram (Program topDefs) =
+  let fts = Map.fromList $ concatMap topDefType topDefs
+  in local (fourth (const fts)) $ concatMapM compileTopDef topDefs
+
+topDefType :: TopDef -> [(Ident, Type)]
+topDefType (StrDef _ _ _) = []
+topDefType (TopFnDef (FnDef t name _ _)) = [(name, t)]
 
 compileTopDef :: TopDef -> CodeGen [LocalCount]
 compileTopDef (StrDef n _ mems) = enterClass n $ concatMapM compileMember mems
@@ -76,13 +82,13 @@ compileFunction (FnDef t name args (Block stmts)) = do
       fieldNames = map fst fields
       fields' = zip fieldNames $ map (Loc LObj) [1..]
       env = Map.fromList $ args' ++ locals ++ fields'
-      objClasses = Map.fromList $
-                     variablesToClasses localDecls
-                     ++ variablesToClasses fields
-                     ++ variablesToClasses (map argToType args)
-                     ++ if isMethod then [(Ident "self", clsName)] else []
+      objTypes = Map.fromList $
+                     localDecls
+                     ++ fields
+                     ++ (map argToType args)
+                     ++ if isMethod then [(Ident "self", Struct clsName)] else []
   mangled <- mangle name
-  local (third4 (const env) . fourth (const objClasses)) $ censor ((:[]) . QFun mangled) $ do
+  local (third4 (const env) . fourth (Map.union objTypes)) $ censor ((:[]) . QFun mangled) $ do
     compileStmts stmts'
     when (t == Latte.Void) ret
   return [(mangled, toInteger $ length localNames)]
@@ -220,7 +226,7 @@ compileExpr (EMeth objName methName args) = do
 compileExpr (Neg e) = compileUnOp ONeg e
 compileExpr (Not e) = compileUnOp ONot e
 compileExpr (EMul e1 op e2) = compileBinOp e1 (OMul op) e2
-compileExpr (EAdd e1 op e2) = compileBinOp e1 (OAdd op) e2 -- TODO: string concatenation
+compileExpr (EAdd e1 op e2) = compileBinOp e1 (OAdd op) e2
 compileExpr (ERel e1 op e2) = compileBinOp e1 (ORel op) e2
 compileExpr (EAnd e1 e2) = do
   v <- compileExpr e1
@@ -260,8 +266,31 @@ compileBinOp e1 op e2 = do
   v1 <- compileExpr e1
   v2 <- compileExpr e2
   r <- freshReg
-  tell [QBin r v1 op v2]
+  concatting <- isString e1
+  let op' = if op == (OAdd Plus) && concatting then OConcat else op
+  tell [QBin r v1 op' v2]
   return r
+
+getT :: Ident -> CodeGen Type
+getT name = askMap name frh4
+
+isString :: Expr -> CodeGen Bool
+isString (EVar ident) = do
+  t <- getT ident
+  return (t == Str)
+isString (EAcc objid memid) = do
+  name <- getClassOfVar objid
+  t <- getMemberType name memid
+  return (t == Str)
+isString (EString _) = return True
+isString (EMeth objid methid _) = do
+  name <- getClassOfVar objid
+  t <- (\(Fun t _) -> t) <$> getMemberType name methid
+  return (t == Str)
+isString (EAdd e1 Plus _) = return True
+isString (EApp name _) = do
+  t <- getT name
+  return (t == Str)
 
 compileCond :: Expr -> Label -> Label -> CodeGen ()
 compileCond e ifTrue ifFalse = go e

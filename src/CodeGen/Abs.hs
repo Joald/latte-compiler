@@ -87,7 +87,7 @@ showLoc (Loc LLocal i) = "local[" ++ show i ++ "]"
 showLoc (Loc LObj i) = "self[" ++ show i ++ "]"
 data Region = LArg | LLocal | LObj
   deriving (Show, Eq, Ord, Read)
-data Op = OAdd AddOp | OMul MulOp | OAnd | OOr | ORel RelOp
+data Op = OAdd AddOp | OMul MulOp | OAnd | OOr | ORel RelOp | OConcat
   deriving (Show, Eq, Ord, Read)
 
 showOp :: Op -> String
@@ -99,6 +99,8 @@ showOp (OMul Mod) = "%"
 showOp OAnd = "&&"
 showOp OOr = "||"
 showOp (ORel op) = showRelOp op
+showOp OConcat = "++"
+
 showRelOp :: RelOp -> String
 showRelOp op =
   case op of
@@ -111,7 +113,7 @@ showRelOp op =
 type IdentMap = Map Ident Ident
 type LocMap = Map Ident Loc
 
-type Env = (ClassMap, Ident, LocMap, IdentMap)
+type Env = (ClassMap, Ident, LocMap, TypeMap)
 type St = Integer
 
 type CodeGen = WriterT [Quad] (ReaderT Env (State St))

@@ -6,7 +6,6 @@ import Control.Monad.Reader
 import Control.Monad.State
 
 import qualified Data.Map as Map
-import Data.Map (Map)
 import Data.List
 import Data.Maybe
 
@@ -17,10 +16,7 @@ import CodeGen.Abs
 import CodeGen.Utils
 
 quadToAsm :: ClassMap -> LocalCounts -> [Quad] -> [Asm]
-quadToAsm clsMap localCounts qs =
-  let fnNames = Map.keys localCounts
-  --    clsMap' = polymorphisation clsMap
-  in runQTA (qta qs) clsMap localCounts
+quadToAsm clsMap localCounts qs = runQTA (qta qs) clsMap localCounts
 
 runQTA :: QTA a -> ClassMap -> LocalCounts -> [Asm]
 runQTA m clsMap localCounts =
@@ -36,42 +32,11 @@ constMapper f v =
     _ -> f v
 
 mapMapper :: AsmMap -> (Val -> Param) -> Val -> Param
-mapMapper map f v = fromMaybe (f v) (Map.lookup v map)
+mapMapper m f v = fromMaybe (f v) (Map.lookup v m)
 
 insertMapper :: AsmMap -> QTA ()
 insertMapper = modify . first . mapMapper
 
-{-type QFunMap = Map Ident [Quad]
-
-divideQs :: [Ident] -> [Quad] -> QFunMap
-divideQs [] [] = Map.empty
-divideQs ids qs = Map.fromList $ go ids qs
-  where
-    go :: [Ident] -> [Quad] -> [(Ident, [Quad])]
-    go _ [] = []
-    go ids (QLabel l:qs) =
-      let (lres, rest) = go' l ids qs
-      in (l, lres) : rest
-    go _ _ = error "code must start with a label"
-    go' :: Ident -> [Ident] -> [Quad] -> ([Quad], [(Ident, [Quad])])
-    go' curId ids qall@(i@(QLabel l):qs) =
-      if l `elem` ids then ([], go ids qall) else
-        first (i:) $ go' curId ids qs
-    go' _ _ [] = ([], [])
-    go' curId ids (q:qs) = first (q:) $ go' curId ids qs
-
-polymorphisation :: ClassMap -> ClassMap
-polymorphisation =
-  runReader $ fmap Map.fromList $ asks (map fst . Map.toList) >>= mapM go
-  where
-    go clsName = do
-      flds <- getAllFields clsName
-      meths <- getAllMethods clsName
-      let meths' = map snd meths
-      ts <- mapM (getMemberType clsName) meths'
-      let mems' = Map.fromList $ flds ++ zip meths' ts
-      return (clsName, Class clsName noBaseClass mems')
--}
 custom :: String -> QTA ()
 custom s = tell [ACustom s]
 
@@ -82,8 +47,9 @@ qta :: [Quad] -> QTA ()
 qta qs = do
   custom "DEFAULT REL"
   custom "global main"
-  mapM_ (custom . ("extern " ++) . unIdent) builtins
-  custom $ "extern " ++ unIdent calloc
+  mapM_ (custom . ("extern " ++) . unIdent) ([calloc, concat'] ++ builtins)
+--  custom $ "extern " ++ unIdent calloc
+--  custom $ "extern " ++ unIdent concat
   strs <- intoSection SRodata $ generateConstants qs
   insertMapper strs
   ctors <- snd <$> listen' createCtors
@@ -213,6 +179,9 @@ calloc = Ident "__internal__calloc"
 zero :: Label
 zero = Ident "__internal__zero"
 
+concat' :: Label
+concat' = Ident "__internal__concat"
+
 mov :: Param -> Param -> QTA ()
 mov p1 p2 = tell [ABin MOV p1 p2]
 
@@ -337,7 +306,13 @@ doOp op pr =
       xor eax eax
       label l
       return eax
-
+    OConcat -> do
+      subEsp 8
+      push pr
+      push eax
+      call concat'
+      addEsp 16
+      return eax
 relToJmp :: RelOp -> UnAsm
 relToJmp op =
   case op of
