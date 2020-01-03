@@ -291,7 +291,7 @@ isString (EAdd e1 Plus _) = return True
 isString (EApp name _) = do
   t <- getT name
   return (t == Str)
-
+isString _ = return False
 compileCond :: Expr -> Label -> Label -> CodeGen ()
 compileCond e ifTrue ifFalse = go e
   where

@@ -23,7 +23,7 @@ else:
     if dirr.endswith("good"):
         running = True
 if len(argv) < 3:
-    cmd = ["./runfile.sh"]
+    cmd = ["./latc_x86"]
 else:
     cmd = argv[2].split(" ")
 
@@ -54,7 +54,7 @@ def runFile(f):
 
         passed += 0 if running else 1
     else:
-        autoplaying = False
+        autoplaying = autoplaying and not running
         print(red)
 
     
@@ -68,7 +68,7 @@ def runFile(f):
             print(green + "OUTPUT OK")
             passed += 1
         else:
-            autoplaying = False
+            autoplaying = autoplaying and not running
             print(red + "OUTPUT DIFFERS")
             print(reset + "Expected:")
             print(green + outFile)
