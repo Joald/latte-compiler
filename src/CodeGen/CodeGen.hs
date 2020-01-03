@@ -287,7 +287,7 @@ isString (EMeth objid methid _) = do
   name <- getClassOfVar objid
   t <- (\(Fun t _) -> t) <$> getMemberType name methid
   return (t == Str)
-isString (EAdd e1 Plus _) = return True
+isString (EAdd e1 Plus _) = isString e1
 isString (EApp name _) = do
   t <- getT name
   return (t == Str)
