@@ -98,7 +98,7 @@ qInter cls locals qs = do
       qLabels = Map.fromList $ concatMap getLabel $ Map.toList qmap
       initEnv = (qmap, qLabels, cls, locals)
       initSt = (Map.empty, Map.empty, Map.empty)
-  putErrLn $ "Compiled Quad code: \n" ++ unlines (map showQuad qs)
+  putErrLn $ "Compiled Quad code: \n" ++ unlines (map show qs)
   putErrLn "Interpreting program..."
   VInt res <- runReaderT (evalStateT (call mainID []) initSt) initEnv
   putErrLn $ "Process returned " ++ show res

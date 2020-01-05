@@ -28,7 +28,7 @@ run p s = let ts = myLexer s in case p ts of
            Ok program -> case typeCheck program of
              Right clsMap -> do
                putErrLn "OK"
-               --interpQuad clsMap tree
+               --interpQuad clsMap program               
                putStrLn $ codeGen clsMap program
              Left err ->  do
                putErrLn $ "ERROR\n" ++ err

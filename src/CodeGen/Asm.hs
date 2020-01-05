@@ -48,13 +48,10 @@ qta qs = do
   custom "DEFAULT REL"
   custom "global main"
   mapM_ (custom . ("extern " ++) . unIdent) ([calloc, concat'] ++ builtins)
---  custom $ "extern " ++ unIdent calloc
---  custom $ "extern " ++ unIdent concat
   strs <- intoSection SRodata $ generateConstants qs
   insertMapper strs
   ctors <- snd <$> listen' createCtors
   code <- snd <$> listen' (createFns qs)
---  intoSection SBss $ generateConstants constants
   section SText (code ++ ctors)
 
 generateConstants :: [Quad] -> QTA AsmMap
@@ -199,8 +196,10 @@ createCtor (Class name _ _) = do
   push $ PImm classSize
   call calloc
   addEsp 24
+  fnCount <- length <$> getAllMethods name
   let vt = vTable name
-  mov (addrExact EAX) (PLabel vt)
+      param = if fnCount == 0 then PImm 0 else PLabel vt
+  mov (addrExact EAX) param
   ts <- mapM (getMemberType name) flds
   mov edx eax
   zipWithM_ initializeField ts $ map (addrOffset EDX) [4,8..]
@@ -211,7 +210,7 @@ createVTable :: Class -> QTA ()
 createVTable (Class name _ _) = do
   fns <- getAllMethods name
   let names = map fst fns
-  tell [Aequ (vTable name) names]
+  when (length names /= 0) $ tell [Aequ (vTable name) names]
 
 ret :: QTA ()
 ret = tell [Aret]
@@ -288,7 +287,7 @@ doOp op pr =
     OMul mulOp -> do -- using ebx because ecx might be used by valToParam
       push ebx
       mov ebx pr
-      custom "  cdq"
+      unless (mulOp == Times) $ custom "  cdq"
       unAsm (mulOpToUnAsm mulOp) ebx
       pop ebx
       return if mulOp == Mod then edx else eax

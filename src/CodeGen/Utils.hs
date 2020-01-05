@@ -49,7 +49,7 @@ getLocMap = asks thd4
 
 getFieldOffset :: ClassMappable m => Ident -> Ident -> m Integer
 getFieldOffset clsName fldName =
-  toInteger . fromJust . elemIndex fldName . map fst <$> getAllFields clsName
+  (+1) . toInteger . fromJust . elemIndex fldName . map fst <$> getAllFields clsName
 
 getIdentDeclsDeep :: Stmt -> [(Ident, Type)]
 getIdentDeclsDeep = mapStmt getIdentDecls

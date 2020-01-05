@@ -45,35 +45,35 @@ def runFile(f):
     pat = f[:-4] 
     inpat = pat + ".input"
     inFile = open(inpat, 'r') if running and path.exists(inpat) else None 
+    if system(" ".join(cmd + [f])) == 0:
+        res = subprocess.run(["./" + pat], stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=inFile)
+        if res.returncode == 0:
+            print(green)
+            system("rm " + pat)
+            system("rm " + pat + ".s")
 
-    res = subprocess.run(cmd + [f], stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=inFile)
-    if res.returncode == 0:
-        print(green)
-        system("rm " + pat)
-        system("rm " + pat + ".s")
-
-        passed += 0 if running else 1
-    else:
-        autoplaying = autoplaying and not running
-        print(red)
-
-    
-    print(bgwhite)
-    out = res.stdout.decode("utf-8")
-    print(out)
-    print(res.stderr.decode("utf-8"))
-    if running:
-        outFile = open(pat + ".output", 'r').read()
-        if outFile == out:
-            print(green + "OUTPUT OK")
-            passed += 1
+            passed += 0 if running else 1
         else:
             autoplaying = autoplaying and not running
-            print(red + "OUTPUT DIFFERS")
-            print(reset + "Expected:")
-            print(green + outFile)
-            print(reset + "Got:")
-            print(yellow + out)
+            print(red)
+
+        
+        print(bgwhite)
+        out = res.stdout.decode("utf-8")
+        print(out)
+        print(res.stderr.decode("utf-8"))
+        if running:
+            outFile = open(pat + ".output", 'r').read()
+            if outFile == out:
+                print(green + "OUTPUT OK")
+                passed += 1
+            else:
+                autoplaying = autoplaying and not running
+                print(red + "OUTPUT DIFFERS")
+                print(reset + "Expected:")
+                print(green + outFile)
+                print(reset + "Got:")
+                print(yellow + out)
 
             
 
